@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - name: Typecheck (published line)
+        run: pnpm run typecheck:ci
+      - run: pnpm test
+      - run: pnpm run test:coverage
+      - run: pnpm run lint
+      - run: pnpm run check:readmes
+      - run: pnpm run build
+      - run: pnpm run verify:self-contained
+      # Pack once, then prove the SHIPPED artifact installs and loads: the
+      # tarball (not the checkout) is what users and dsh profiles consume.
+      - run: pnpm pack --pack-destination out
+      - run: node scripts/smoke-package.mjs out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarball-node${{ matrix.node-version }}
+          path: out/*.tgz
+          if-no-files-found: error
+
+  host-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/check-host-versions.mjs
