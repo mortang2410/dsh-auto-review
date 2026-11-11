@@ -257,6 +257,38 @@ describe.skipIf(InvariantRegistry === undefined)('auto-review invariants', () =>
     }).toThrow(/allowed-once/u)
   })
 
+  it('fails a human grant that does not settle as an allow', async () => {
+    const { session } = await mount()
+    session.append('approval/asked', { id: ApprovalRequestId('a-grant'), toolName: 'bash' })
+    expect(() => {
+      session.append('autoReview/verdict', {
+        reviewId: AutoReviewVerdictId('r-grant'),
+        approvalId: ApprovalRequestId('a-grant'),
+        toolName: 'bash',
+        provider: 'human',
+        durationMs: 0,
+        decision: 'allow',
+        reason: 'the user authorized this action: make the PR',
+        humanAuthorized: 'make the PR',
+        riskLevel: 'high',
+        outcome: 'allowed-once',
+      })
+    }).toThrow(/riskLevel alongside a humanAuthorized grant/u)
+    expect(() => {
+      session.append('autoReview/verdict', {
+        reviewId: AutoReviewVerdictId('r-grant-2'),
+        approvalId: ApprovalRequestId('a-grant'),
+        toolName: 'bash',
+        provider: 'human',
+        durationMs: 0,
+        decision: 'allow',
+        reason: 'the user authorized this action: make the PR',
+        humanAuthorized: 'make the PR',
+        outcome: 'rejected',
+      })
+    }).toThrow(/did not settle allowed-once/u)
+  })
+
   it('accepts an override referencing a deny verdict and fails an orphan', async () => {
     const { session } = await mount()
     session.append('approval/asked', { id: ApprovalRequestId('a-over'), toolName: 'bash' })

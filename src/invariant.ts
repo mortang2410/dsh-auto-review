@@ -144,6 +144,23 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
       if (data.outcome !== undefined && !OUTCOMES.includes(data.outcome)) {
         fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} has invalid outcome ${JSON.stringify(data.outcome)}`)
       }
+      if (data.humanAuthorized !== undefined) {
+        // A grant names the owner's words and settles the call by itself: it
+        // is always an allow, always settles, and never carries a risk level
+        // (the risk clamp does not apply to what the human authorized).
+        if (typeof data.humanAuthorized !== 'string' || data.humanAuthorized.length === 0) {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} has an empty humanAuthorized grant`)
+        }
+        if (data.decision !== 'allow') {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries a humanAuthorized grant on a ${JSON.stringify(data.decision)} verdict`)
+        }
+        if (data.outcome !== 'allowed-once') {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries a humanAuthorized grant that did not settle allowed-once`)
+        }
+        if (data.riskLevel !== undefined) {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries a riskLevel alongside a humanAuthorized grant`)
+        }
+      }
       if (data.escalation !== undefined) {
         // The only escalation today: the risk policy overrode an allow. It
         // must reference an allow verdict and can never settle allowed-once.

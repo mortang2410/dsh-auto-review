@@ -760,11 +760,10 @@ describe('auto-review answerer', () => {
     expect(cancel).toHaveBeenCalledWith({ kind: 'hook', reason: expect.stringContaining('circuit breaker') })
   })
 
-  it('runs the next same-tool review with a pending human override, then consumes it', async () => {
-    let decision: 'allow' | 'deny' = 'deny'
+  it('grants the next same-tool call with a pending human override, then consumes it', async () => {
     const harness = await auditHarness(
       { toolsPolicy: { overrides: { bash: 'ai' } } },
-      () => ({ verdict: { decision, reason: 'x' } }),
+      () => ({ verdict: { decision: 'deny', reason: 'x' } }),
     )
     const first = await dispatchAskedApproval(harness.ctx, harness.session, {
       agent: harness.agent,
@@ -777,22 +776,24 @@ describe('auto-review answerer', () => {
       reviewId,
       toolName: 'bash',
     })
-    decision = 'allow'
     const second = await dispatchAskedApproval(harness.ctx, harness.session, {
       agent: harness.agent,
       toolName: 'bash',
     }, next)
     expect(second.outcome).toBe('allowed-once')
-    const overrideStart = harness.subagents.starts.at(-1)!
-    const overrideText = overrideStart.request.prompt.map(block => block.type === 'text' ? block.text : '').join('')
-    expect(overrideText).toContain('HUMAN OVERRIDE')
+    // The human authorized it, so no reviewer runs and no verdict can disagree.
+    expect(harness.subagents.starts).toHaveLength(1)
+    expect(lastEvent(harness.session.snapshotEvents(), 'autoReview/verdict')?.data).toMatchObject({
+      decision: 'allow',
+      outcome: 'allowed-once',
+      humanAuthorized: `one-shot override ${reviewId}`,
+    })
+    // Single-use: the next same-tool call is reviewed again, and denied.
     const third = await dispatchAskedApproval(harness.ctx, harness.session, {
       agent: harness.agent,
       toolName: 'bash',
     }, next)
-    expect(third.outcome).toBe('allowed-once')
-    const consumedStart = harness.subagents.starts.at(-1)!
-    const consumedText = consumedStart.request.prompt.map(block => block.type === 'text' ? block.text : '').join('')
-    expect(consumedText).not.toContain('HUMAN OVERRIDE')
+    expect(third.outcome).toBe('rejected')
+    expect(harness.subagents.starts).toHaveLength(2)
   })
 })

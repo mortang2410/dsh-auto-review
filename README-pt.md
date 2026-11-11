@@ -68,6 +68,7 @@ O `dsh-auto-review` coloca um segundo modelo na cadeia de answerers de `approval
 6. **Trilha de auditoria completa** — eventos de sessão somente-log `autoReview/verdict` + `autoReview/rejection` (envelope `ignorable: true`) mais um companheiro invariant opcional que impõe marcador ⟺ evento.
 7. **Controles de segurança** — um disjuntor de rejeições (3 negações consecutivas, ou 6 dos últimos 10 vereditos, por turno), uma política por nível de risco, uma anulação de uso único `/auto-review approve` e uma desativação dura de política `never` que se explica ao modelo.
 8. **Contexto opcional do revisor** — uma transcrição compacta limitada (`contextBudget`) mais uma política de decisão em Markdown estilo Codex (`reviewerPolicyText`).
+9. **Sua permissão decide** — quando você autoriza na sua própria mensagem ("sim", "pode ir", "faça o PR"), a chamada pendente é concedida antes de qualquer revisor: o revisor não roda, o orçamento de IA não é gasto e o limite de risco não a rebaixa. `/auto-review approve` segue o mesmo caminho.
 
 Cada decisão se reconstrói a partir do log da sessão: `approval/asked` → `autoReview/verdict` (ou `autoReview/rejection`) → `approval/decided`.
 
@@ -187,7 +188,7 @@ Coloque a configuração no `cordis.patch.yml` do seu perfil. Uma **substituiç�
 /auto-review on|off|status|approve [n]
 ```
 
-`on`/`off` anexam a anulação durável `autoReview/state` (a dobra sobrevive a reinício/retomada — a repetição É o estado) e injetam um aviso de mudança que o modelo vê (registrado como um evento `user/message`). `status` relata o estado efetivo, ambos os orçamentos por turno (vereditos de IA e falhas do revisor), um disjuntor disparado quando há um ativo e as estatísticas acumuladas da sessão (permissões/negações/fallbacks/rejeições `never`, duração média, vereditos recentes). `approve [n]` registra uma anulação `autoReview/override` de uso único para a n-ésima negação mais recente (1 = mais recente): a próxima revisão da mesma ferramenta dentro de `overrideTtlMs` carrega a autorização como contexto do revisor — o revisor ainda decide, e a anulação é consumida por essa revisão independentemente do resultado.
+`on`/`off` anexam a anulação durável `autoReview/state` (a dobra sobrevive a reinício/retomada — a repetição É o estado) e injetam um aviso de mudança que o modelo vê (registrado como um evento `user/message`). `status` relata o estado efetivo, ambos os orçamentos por turno (vereditos de IA e falhas do revisor), um disjuntor disparado quando há um ativo e as estatísticas acumuladas da sessão (permissões/negações/fallbacks/rejeições `never`, duração média, vereditos recentes). `approve [n]` registra uma anulação `autoReview/override` de uso único para a n-ésima negação mais recente (1 = mais recente): a próxima requisição da mesma ferramenta dentro de `overrideTtlMs` é concedida sem revisor — você autorizou — e a anulação é consumida por essa requisição seja qual for o resultado.
 
 ## Painel web de revisão
 
@@ -212,6 +213,13 @@ O painel lê apenas valores inteiros da projeção — ele nunca recebe o fluxo 
 │  · risk rules → toolsPolicy → default       │
 └───────────────────────┬──────────────────────┘
                         │ yes
+                        ▼
+        ┌────────────────────────────────────────┐
+        │ the owner granted permission in this   │
+        │ window (their own words, or a pending  │ ── yes ──▶ allowed-once (no reviewer,
+        │ `/auto-review approve` override)?      │             no risk clamp, no AI budget)
+        └───────────────┬────────────────────────┘
+                        │ no
                         ▼
         ┌───────────────────────────────────┐
         │ reviewer subagent (fork, one-shot)│
@@ -368,7 +376,9 @@ O servidor é somente-leitura e determinista: sem rede, sem modelo, sem gravaç�
 - O revisor precisa de uma rota LLM funcional (herdada por padrão); sem ela, cada revisão cai conforme `fallbackPolicy` — nunca uma concessão silenciosa.
 - Os nomes em `reviewerTools` devem existir como ferramentas globais no perfil; um nome desconhecido faz o filho revisor falhar em voz alta no ponto mais cedo e cai em fallback.
 - Regras de risco emparelham o `reason` da solicitação, o `toolName` ou os `arguments` redigidos da chamada conforme seu `field`; outras condições pertencem a `toolsPolicy.overrides`.
-- A anulação `/auto-review approve` autoriza a próxima revisão da mesma ferramenta, não a chamada histórica exata; uma ação diferente na mesma ferramenta a consome.
+- A anulação `/auto-review approve` autoriza a próxima requisição da mesma ferramenta, não a chamada histórica exata; uma ação diferente na mesma ferramenta a consome.
+- A autorização é lida apenas das suas próprias mensagens (eventos `user/message` com a fonte `user`), no turno aberto e no anterior, e vale para o turno inteiro: uma vez que você pede algo, as chamadas que executam aquilo são concedidas, não só uma. Avisos agendados e texto de outros plugins nunca são lidos como sua voz, e uma sessão delegada não concede nada porque sua mensagem "user" é o prompt do agente pai.
+- A lista de frases é em inglês: permissão explícita, resposta afirmativa e imperativo com objeto. Outros idiomas e formulações incomuns ficam com o revisor, cujo prompt carrega a mesma regra: permita o que você já autorizou.
 - Os eventos de veredito são somente-log; o painel web de revisão lê a projeção `autoReview` dobrada (o fluxo bruto de eventos nunca chega aos plugins do navegador).
 - `autoReview/state` e `autoReview/verdict` são anexados com o marcador de envelope `ignorable: true` em hosts que o respeitam, para que qualquer build do harness carregue o log — leitores que não conhecem os tipos fora do repo simplesmente pulam esses registros. Em hosts rc publicados (rc.1–rc.8) o runtime detecta o marcador descartado e nunca escreve esses eventos (o espelho em memória mantém o comando, os orçamentos, o disjuntor e `approve` durante a sessão); sessões já poluídas por versões anteriores a 0.5.1 podem ser reparadas com `scripts/repair-session-logs.mjs` de `dsh-permission-rules` (seu conjunto padrão cobre os cinco tipos de evento `autoReview/*`).
 - O canal git precisa da única chave `allowBuilds` que o CLI do `dsh` imprime para o próprio `dsh-auto-review`. O repo envia seu próprio `pnpm-workspace.yaml` com `allowBuilds: { esbuild: true }`; `typescript` + `tsdown` são `dependencies` regulares.

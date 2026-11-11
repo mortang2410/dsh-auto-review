@@ -57,8 +57,9 @@ import {
   type StateAppend,
   type VerdictAppend,
 } from './events.ts'
+import { findUserAuthorization } from './authorization.ts'
 import { isReviewFailure, newCircuitId, newRejectionId, newVerdictId, runReview, sanitizedArgumentsText, truncate } from './review.ts'
-import type { OverrideContext, ReviewFailure, ReviewResolution } from './review.ts'
+import type { ReviewFailure, ReviewResolution } from './review.ts'
 
 export const name = 'auto-review'
 export const inject = ['approval', 'subagents', 'commands', 'tools']
@@ -78,6 +79,8 @@ interface MemoryVerdict {
   readonly toolName: string
   /** Whether the verdict rejected (a deny, a risk-policy override, or a hard-disable). */
   readonly denial: boolean
+  /** Whether a reviewer decided it; a human grant did not, so it spends no AI budget. */
+  readonly reviewed: boolean
 }
 
 /** One in-memory denial record for `/auto-review approve` (newest first). */
@@ -311,7 +314,9 @@ export class AutoReviewRuntime {
 
   /** The per-turn metrics the caller should read: event folds on marker-aware hosts, the memory mirror otherwise. */
   private verdictsInOpenTurn(session: Session, memory: SessionMemory): number {
-    return this.auditMayAppend() ? autoReviewsInOpenTurn(sessionEvents(session)) : memory.verdicts.length
+    return this.auditMayAppend()
+      ? autoReviewsInOpenTurn(sessionEvents(session))
+      : memory.verdicts.filter(verdict => verdict.reviewed).length
   }
 
   private failuresInOpenTurn(session: Session, memory: SessionMemory): number {
@@ -378,6 +383,15 @@ export class AutoReviewRuntime {
     const { policy, source } = policyFor(this.config, request, argumentsText)
     if (policy === 'never') return this.neverReject(request, source)
     if (policy !== 'ai') return next()
+    const approvalId = correlateApprovalId(sessionEvents(session), request.toolName, request.callId)
+    // A human grant settles the call BEFORE any reviewer runs, and ahead of
+    // both budgets and the circuit breaker: those bound a reviewer that keeps
+    // saying no, and a granted call needs no reviewer at all. The audit chain
+    // still needs the correlating `approval/asked`, so a grant on an
+    // uncorrelatable request falls through to the reviewer path, which fails
+    // closed like every other uncorrelatable request.
+    const grant = approvalId === undefined ? undefined : this.grantFor(session, memory, request.toolName)
+    if (grant !== undefined && approvalId !== undefined) return this.settleGrant(request, approvalId, grant)
     // Separate budgets: real AI verdicts vs reviewer failures. A broken
     // reviewer burns the failure budget (then delegates) without eating the
     // AI-decision budget, and vice versa.
@@ -385,7 +399,6 @@ export class AutoReviewRuntime {
     if (this.failuresInOpenTurn(session, memory) >= this.config.maxFailuresPerTurn) return next()
     const circuit = this.circuitFor(session, memory)
     if (circuit !== undefined) return this.circuitSettle(request, circuit, next)
-    const approvalId = correlateApprovalId(sessionEvents(session), request.toolName, request.callId)
     if (approvalId === undefined) {
       // The audit chain cannot be completed (verdict → approval/asked); treat
       // as an internal unavailability, never as a grant.
@@ -394,11 +407,60 @@ export class AutoReviewRuntime {
         error: 'cannot correlate the pending approval/asked audit event',
       }, next)
     }
-    const overrideId = this.activeOverrideFor(session, memory, request.toolName, Date.now())
-    const override: OverrideContext | undefined = overrideId === undefined
-      ? undefined
-      : { reviewId: overrideId, toolName: request.toolName }
-    return this.review(request, approvalId, next, override)
+    return this.review(request, approvalId, next)
+  }
+
+  /**
+   * The human grant that authorizes this request, when one applies: the
+   * session owner's own words inside the authorization window, else a pending
+   * `/auto-review approve` override for the tool. Reading the override here
+   * consumes it — it is single-use by construction, and a second call on the
+   * same tool needs a second grant.
+   * @param session - the requesting session (its log holds both grants).
+   * @param memory - the audit-disabled mirror holding in-memory overrides.
+   * @param toolName - the tool the pending request is about.
+   * @returns the granting words, or undefined when the human has not granted.
+   */
+  private grantFor(session: Session, memory: SessionMemory, toolName: string): string | undefined {
+    const authorization = findUserAuthorization(sessionEvents(session), session.header.delegationDepth ?? 0)
+    if (authorization !== undefined) return authorization.quote
+    const overrideId = this.activeOverrideFor(session, memory, toolName, Date.now())
+    return overrideId === undefined ? undefined : `one-shot override ${String(overrideId)}`
+  }
+
+  /**
+   * Settle a granted request: record the log-only allow verdict that names the
+   * owner's words, and return the grant. No reviewer runs, no budget is spent,
+   * and the risk policy does not apply — a permission the owner stated is not
+   * something a risk cap may downgrade. On an audit-disabled host the grant
+   * reaches the in-memory mirror instead, marked as not reviewed so it cannot
+   * consume the AI budget.
+   * @param request - the granted decision.
+   * @param approvalId - the correlated `approval/asked` id.
+   * @param authorization - the granting words (the owner's own, or the override).
+   * @returns the closed grant.
+   */
+  private settleGrant(request: ApprovalRequest, approvalId: ApprovalRequestId, authorization: string): Promise<ApprovalOutcome> {
+    const session = request.agent.session
+    const reviewId = newVerdictId()
+    if (this.auditMayAppend()) {
+      const result = (session.append as unknown as VerdictAppend)('autoReview/verdict', {
+        reviewId,
+        approvalId,
+        toolName: request.toolName,
+        ...request.callId !== undefined ? { callId: request.callId } : {},
+        provider: 'human',
+        durationMs: 0,
+        decision: 'allow',
+        reason: `the user authorized this action: ${authorization}`,
+        humanAuthorized: authorization,
+        outcome: 'allowed-once',
+      }, { ignorable: true })
+      this.probeAuditResult(result)
+    } else {
+      this.recordVerdictMemory(this.memoryFor(session), { id: String(reviewId), toolName: request.toolName, denial: false, reviewed: false })
+    }
+    return Promise.resolve('allowed-once')
   }
 
   /**
@@ -446,8 +508,7 @@ export class AutoReviewRuntime {
    * the verdict is not replayable from `tool + arguments` alone: the cache is
    * disabled (`verdictCacheTtlMs: 0`), the reviewer transcript is enabled
    * (the verdict depends on session context), or the log lacks a parseable
-   * presented call. The caller also bypasses the cache for a pending human
-   * override, which changes the reviewer's evidence.
+   * presented call.
    * @param request - the pending approval request.
    * @returns the fingerprint, or undefined to skip the cache (fail-closed:
    *   the request then runs the second model as before).
@@ -467,26 +528,24 @@ export class AutoReviewRuntime {
    * @param request - the pending decision.
    * @param approvalId - the correlated `approval/asked` id.
    * @param next - the downstream chain (used by risk-policy delegation).
-   * @param override - a pending human one-shot override, when one applies.
    * @returns the closed approval outcome.
    */
   private async review(
     request: ApprovalRequest,
     approvalId: ApprovalRequestId,
     next: () => Promise<ApprovalOutcome>,
-    override?: OverrideContext,
   ): Promise<ApprovalOutcome> {
     const started = Date.now()
     const cacheKey = this.fingerprintFor(request)
     let resolution: ReviewResolution
     let cached = false
-    if (cacheKey !== undefined && override === undefined) {
+    if (cacheKey !== undefined) {
       const hit = this.cache.get(cacheKey, started)
       if (hit !== undefined) {
         resolution = { ...hit }
         cached = true
       } else {
-        resolution = await runReview(this.ctx, this.config, request, this.reviewerSessions, override)
+        resolution = await runReview(this.ctx, this.config, request, this.reviewerSessions)
         if (!isReviewFailure(resolution)) {
           this.cache.set(cacheKey, {
             decision: resolution.decision,
@@ -496,7 +555,7 @@ export class AutoReviewRuntime {
         }
       }
     } else {
-      resolution = await runReview(this.ctx, this.config, request, this.reviewerSessions, override)
+      resolution = await runReview(this.ctx, this.config, request, this.reviewerSessions)
     }
     const durationMs = Date.now() - started
     if (isReviewFailure(resolution)) {
@@ -533,6 +592,7 @@ export class AutoReviewRuntime {
         id: String(reviewId),
         toolName: request.toolName,
         denial: resolution.decision === 'deny' || (overridden && outcome === 'rejected'),
+        reviewed: true,
       })
     }
     if (outcome === undefined) return next()
@@ -857,10 +917,10 @@ export class AutoReviewRuntime {
 
   /**
    * Execute `/auto-review approve [n]`: record a single-use human override
-   * for the n-th most recent denial (1 = most recent). The override is
-   * consumed by the NEXT same-tool review within `overrideTtlMs`, which
-   * carries the authorization as reviewer context — the reviewer still
-   * decides.
+   * for the n-th most recent denial (1 = most recent). The next same-tool
+   * request within `overrideTtlMs` is granted without a reviewer: the human
+   * authorized it, and consuming the override is what that authorization
+   * buys.
    * @param invocation - the received command invocation.
    * @returns the command result shown to the user.
    */

@@ -6,6 +6,8 @@ All notable changes to `dsh-auto-review` are documented here. The repo is pre-re
 
 ### Added
 
+- **The session owner's permission settles the call.** Auto-review used to deny actions the user had explicitly authorized: the reviewer prompt fenced the whole transcript as untrusted, `reviewerPolicyText` told the model to look for grounds to reject, the risk clamp turned a reviewed allow above `maxAutoAllow` into a denial, and `/auto-review approve` only carried the grant into the prompt while the model still decided. Now the answerer reads the owner's own grant from the session log before any reviewer starts and settles `allowed-once` by itself: no reviewer run, no AI-budget spend, no risk clamp, and the audit event records the granting words (`humanAuthorized`) so the decision reconstructs from the log. A grant is the owner's own `user`-kind messages inside the open turn and the one before it (scheduled prompts and other plugins' injections are never read as their voice, and a delegated session grants nothing because its "user" message is the parent agent's prompt), and `/auto-review approve` takes the same path. The reviewer prompt now names an explicit `[user]` grant as the decision, so a phrasing the pattern list does not know (another language, an unusual wording) still reaches the same answer. `never` policy still wins: that is an administrator's hard disable, not a reviewer's opinion.
+
 - `reviewerLlmProvider` sets the LLM provider the reviewer run uses. Unset, the reviewer inherits the session agent's provider. It requires `reviewerModel`: setting the provider alone now fails loud at config resolution.
 - `reviewerReasoningEffort` sets the reasoning effort for the reviewer run. Unset, the model default or the inherited effort applies.
 

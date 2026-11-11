@@ -364,7 +364,7 @@ describe('deny marker text', () => {
 })
 
 describe('Phase B prompt sections', () => {
-  it('includes the ruling policy text, the override context, and field-scoped risk rules', () => {
+  it('includes the ruling policy text and field-scoped risk rules', () => {
     const session = Session.create(SessionId('prompt-phaseb'), undefined, {
       version: SESSION_FORMAT_VERSION,
       id: SessionId('prompt-phaseb'),
@@ -379,15 +379,13 @@ describe('Phase B prompt sections', () => {
     }, promptConfig({
       riskRules: [{ pattern: 'bash', regex: /bash/u, policy: 'never', field: 'toolName' }],
       reviewerPolicyText: '# Policy\n- Always deny `rm -rf`',
-    }), { reviewId: AutoReviewVerdictId('r9'), toolName: 'bash' })
+    }))
     expect(prompt).toContain('Ruling policy')
     expect(prompt).toContain('Always deny `rm -rf`')
-    expect(prompt).toContain('HUMAN OVERRIDE')
-    expect(prompt).toContain('review r9')
     expect(prompt).toContain('toolName matches /bash/u → never')
   })
 
-  it('omits the override and policy sections when not configured', () => {
+  it('omits the policy section when not configured', () => {
     const session = Session.create(SessionId('prompt-phaseb-plain'), undefined, {
       version: SESSION_FORMAT_VERSION,
       id: SessionId('prompt-phaseb-plain'),
@@ -396,7 +394,6 @@ describe('Phase B prompt sections', () => {
       isSeeded: false,
     })
     const prompt = buildReviewPrompt({ agent: makeAgent(session), toolName: 'bash' }, promptConfig())
-    expect(prompt).not.toContain('HUMAN OVERRIDE')
     expect(prompt).not.toContain('Ruling policy')
     expect(prompt).not.toContain('Recent session transcript')
   })

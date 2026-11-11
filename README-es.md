@@ -68,6 +68,7 @@ Cuando una acción cruza el límite del sandbox, un segundo modelo lee la eviden
 6. **Rastro de auditoría completo** — eventos de sesión solo-registro `autoReview/verdict` + `autoReview/rejection` (sobre `ignorable: true`) más un compañero invariant opcional que impone marcador ⟺ evento.
 7. **Controles de seguridad** — un disyuntor de rechazos (3 denegaciones consecutivas, o 6 de los últimos 10 veredictos, por turno), una política por nivel de riesgo, una anulación de un solo uso `/auto-review approve`, y una desactivación dura de política `never` que se explica a sí misma al modelo.
 8. **Contexto opcional del revisor** — una transcripción compacta acotada (`contextBudget`) más una política de decisión en Markdown estilo Codex (`reviewerPolicyText`).
+9. **Tu permiso decide** — cuando autorizas en tu propio mensaje ("sí", "adelante", "haz el PR"), la llamada pendiente se concede antes de cualquier revisor: no se ejecuta el revisor, no se gasta presupuesto de IA y el límite de riesgo no la rebaja. `/auto-review approve` sigue el mismo camino.
 
 Cada decisión se reconstruye desde el registro de sesión: `approval/asked` → `autoReview/verdict` (o `autoReview/rejection`) → `approval/decided`.
 
@@ -187,7 +188,7 @@ Pon la configuración en el `cordis.patch.yml` de tu perfil. Una **anulación di
 /auto-review on|off|status|approve [n]
 ```
 
-`on`/`off` añaden la anulación durable `autoReview/state` (el plegado sobrevive al reinicio/reanudación — la repetición ES el estado) e inyectan un aviso de cambio que el modelo ve (registrado como un evento `user/message`). `status` informa del estado efectivo, de ambos presupuestos por turno (veredictos de IA y fallos del revisor), de un disyuntor disparado cuando hay uno activo, y de las estadísticas acumuladas de la sesión (permisiones/denegaciones/fallbacks/rechazos `never`, duración media, veredictos recientes). `approve [n]` registra una anulación `autoReview/override` de un solo uso para la n-ésima denegación más reciente (1 = la más reciente): la siguiente revisión de la misma herramienta dentro de `overrideTtlMs` lleva la autorización como contexto del revisor — el revisor sigue decidiendo, y la anulación se consume con esa revisión independientemente de su resultado.
+`on`/`off` añaden la anulación durable `autoReview/state` (el plegado sobrevive al reinicio/reanudación — la repetición ES el estado) e inyectan un aviso de cambio que el modelo ve (registrado como un evento `user/message`). `status` informa del estado efectivo, de ambos presupuestos por turno (veredictos de IA y fallos del revisor), de un disyuntor disparado cuando hay uno activo, y de las estadísticas acumuladas de la sesión (permisiones/denegaciones/fallbacks/rechazos `never`, duración media, veredictos recientes). `approve [n]` registra una anulación `autoReview/override` de un solo uso para la n-ésima denegación más reciente (1 = la más reciente): la siguiente petición de la misma herramienta dentro de `overrideTtlMs` se concede sin revisor — tú lo autorizaste — y la anulación se consume con esa petición sea cual sea su resultado.
 
 ## Panel web de revisión
 
@@ -212,6 +213,13 @@ El panel lee solo valores completos de proyección — nunca recibe el flujo cru
 │  · risk rules → toolsPolicy → default       │
 └───────────────────────┬──────────────────────┘
                         │ yes
+                        ▼
+        ┌────────────────────────────────────────┐
+        │ the owner granted permission in this   │
+        │ window (their own words, or a pending  │ ── yes ──▶ allowed-once (no reviewer,
+        │ `/auto-review approve` override)?      │             no risk clamp, no AI budget)
+        └───────────────┬────────────────────────┘
+                        │ no
                         ▼
         ┌───────────────────────────────────┐
         │ reviewer subagent (fork, one-shot)│
@@ -368,7 +376,9 @@ El servidor es de solo lectura y determinista: sin red, sin modelo, sin escritur
 - El revisor necesita una ruta LLM funcional (heredada por defecto); sin ella, cada revisión cae según `fallbackPolicy` — nunca una concesión silenciosa.
 - Los nombres de `reviewerTools` deben existir como herramientas globales en el perfil; un nombre desconocido hace fallar al hijo revisor en voz alta en el punto más temprano y cae en fallback.
 - Las reglas de riesgo emparejan el `reason` de la solicitud, el `toolName` o los `arguments` redactados de la llamada según su `field`; otras condiciones van en `toolsPolicy.overrides`.
-- La anulación `/auto-review approve` autoriza la siguiente revisión de la misma herramienta, no la llamada histórica exacta; una acción diferente sobre la misma herramienta la consume.
+- La anulación `/auto-review approve` autoriza la siguiente petición de la misma herramienta, no la llamada histórica exacta; una acción diferente sobre la misma herramienta la consume.
+- La autorización se lee solo de tus propios mensajes (eventos `user/message` con la fuente `user`), en el turno abierto y el anterior, y vale para todo el turno: una vez que pides algo, las llamadas que lo ejecutan quedan concedidas, no una sola. Los avisos programados y el texto de otros plugins nunca se leen como tu voz, y una sesión delegada no concede nada porque su mensaje "user" es el del agente padre.
+- La lista de frases está en inglés: permiso explícito, respuesta afirmativa e imperativo con objeto. Otras lenguas y giros poco comunes quedan para el revisor, cuyo prompt lleva la misma regla: permite lo que ya autorizaste.
 - Los eventos de veredicto son solo-registro; el panel web de revisión lee la proyección `autoReview` plegada (el flujo crudo de eventos nunca llega a los plugins del navegador).
 - `autoReview/state` y `autoReview/verdict` se añaden con el marcador de sobre `ignorable: true` en hosts que lo respetan, de modo que cualquier compilación del harness carga el registro — los lectores que no conocen los tipos fuera del repo simplemente omiten esos registros. En hosts rc publicados (rc.1–rc.8) el runtime detecta el marcador descartado y nunca escribe estos eventos (el espejo en memoria mantiene el comando, los presupuestos, el disyuntor y `approve` durante la sesión); las sesiones ya contaminadas por versiones anteriores a 0.5.1 pueden repararse con `scripts/repair-session-logs.mjs` de `dsh-permission-rules` (su conjunto de tipos por defecto cubre los cinco eventos `autoReview/*`).
 - El canal git necesita la única clave `allowBuilds` que el CLI de `dsh` imprime para el propio `dsh-auto-review`. El repo incluye su propio `pnpm-workspace.yaml` con `allowBuilds: { esbuild: true }`; `typescript` + `tsdown` son `dependencies` regulares.

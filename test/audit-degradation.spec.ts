@@ -136,12 +136,10 @@ describe('audit-disabled degradation (rc.6 host)', () => {
     expect(approve).toMatchObject({ kind: 'success' })
     expect((approve as { text: string }).text).toContain('Authorized ONE retry')
     expect(harness.session.snapshotEvents().some(event => event.type === 'autoReview/override')).toBe(false)
-    // The next same-tool review carries the override as reviewer context.
+    // The in-memory override grants the next same-tool call without a reviewer.
     const second = await dispatchAskedApproval(harness.ctx, harness.session, { agent: harness.agent, toolName: 'bash' }, next)
-    expect(second.outcome).toBe('rejected')
-    const overrideStart = harness.subagents.starts.at(-1)!
-    const overrideText = overrideStart.request.prompt.map(block => block.type === 'text' ? block.text : '').join('')
-    expect(overrideText).toContain('HUMAN OVERRIDE')
+    expect(second.outcome).toBe('allowed-once')
+    expect(harness.subagents.starts).toHaveLength(1)
   })
 })
 

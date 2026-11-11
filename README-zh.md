@@ -68,6 +68,7 @@ DeepSeek Harness 的第二模型 AI 审批 —— 一个只读审查子代理在
 6. **完整审计追踪** —— 仅日志的 `autoReview/verdict` + `autoReview/rejection` 会话事件（信封 `ignorable: true`），外加一个可选的 invariant 配套插件来强制「标记 ⟺ 事件」。
 7. **安全旋钮** —— 拒绝熔断器（每轮 3 次连续拒绝，或最近 10 次裁决中 6 次拒绝）、风险等级策略、一次性 `/auto-review approve` 覆盖，以及会向模型自我解释的 `never` 策略硬禁用。
 8. **可选审查上下文** —— 有界紧凑记录（`contextBudget`）加 Codex 风格 Markdown 裁决策略（`reviewerPolicyText`）。
+9. **你自己的许可就是决定** —— 当你在自己的消息里明确授权（"yes"、"go ahead"、"make the PR"），待处理的调用在任何审查之前直接放行：不运行审查器、不消耗 AI 预算，也不受风险上限压制。`/auto-review approve` 走同一条路。
 
 每一次决策都能从会话日志重建：`approval/asked` → `autoReview/verdict`（或 `autoReview/rejection`）→ `approval/decided`。
 
@@ -187,7 +188,7 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 /auto-review on|off|status|approve [n]
 ```
 
-`on`/`off` 追加持久的 `autoReview/state` 覆盖（折叠在重启/恢复后依然存活 —— 重放即状态），并注入一条模型可见的开关通知（记录为 `user/message` 事件）。`status` 报告有效状态、两个每轮预算（AI 裁决与审查器失败）、活跃的熔断器（如有），以及会话的累计统计（允许/拒绝/回退/never 拒绝、平均耗时、最近裁决）。`approve [n]` 为第 n 条最近的拒绝（1 = 最近）记录一次性 `autoReview/override`：`overrideTtlMs` 内下一次对同一工具的审查会携带该授权作为审查上下文 —— 审查器依然做决定，且无论结果如何，该覆盖都会被这次审查消耗掉。
+`on`/`off` 追加持久的 `autoReview/state` 覆盖（折叠在重启/恢复后依然存活 —— 重放即状态），并注入一条模型可见的开关通知（记录为 `user/message` 事件）。`status` 报告有效状态、两个每轮预算（AI 裁决与审查器失败）、活跃的熔断器（如有），以及会话的累计统计（允许/拒绝/回退/never 拒绝、平均耗时、最近裁决）。`approve [n]` 为第 n 条最近的拒绝（1 = 最近）记录一次性 `autoReview/override`：`overrideTtlMs` 内对同一工具的下一次请求直接放行，不再送审 —— 这是你的授权 —— 且无论结果如何，该覆盖都会被这次请求消耗掉。
 
 ## Web 审查面板
 
@@ -213,6 +214,13 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 └───────────────────────┬──────────────────────┘
                         │ yes
                         ▼
+        ┌────────────────────────────────────────┐
+        │ the owner granted permission in this   │
+        │ window (their own words, or a pending  │ ── yes ──▶ allowed-once (no reviewer,
+        │ `/auto-review approve` override)?      │             no risk clamp, no AI budget)
+        └───────────────┬────────────────────────┘
+                        │ no
+                        ▼
         ┌───────────────────────────────────┐
         │ reviewer subagent (fork, one-shot)│
         │  · toolFilter: read/glob/grep     │
@@ -232,6 +240,18 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 ```
 
 **组合顺序。** answerer 在其注册位置运行于瀑布中：如果人类 UI answerer 被组合在 `auto-review` 行**之前**，则人类先应答，审查器只能看到被下游委派的部分。用 `dsh --profile <name> --dump-config` 验证，并把你希望 ai 策略工具先路由到审查器的 `auto-review` 行放在人类 answerer 行之前。
+
+### 你已经说过可以的时候
+
+审查器是为"没有人回答"的那一刻存在的，它不能压过正在回答的人。因此回答者会在启动审查器之前，先读会话日志里你的授权：
+
+- **什么算授权** —— 明确的许可（"you have my permission"、"I approve"）、肯定回答（"yes"、"go ahead"、"ship it"），或带宾语的动作祈使句（"make the PR"、"push it"、"delete them"）。描述（"the login page is broken"）和拒绝（"not yet"、"don't"）都不算，同一句里的拒绝也不会取消另一句里的授权。
+- **在哪个范围** —— 当前回合与上一回合，也就是"刚才说过"的授权所在的位置。授权以回合为单位生效：你要的东西，执行它的那些调用都属于你要的范围。
+- **谁说的** —— 只认你自己输入的消息。计划任务有自己的来源类型，不会被当成你的声音；被委派的子会话也不授予任何权限，因为它的 "user" 消息是父代理的提示。
+- **它结算什么** —— `allowed-once`：不运行审查器、不消耗 AI 预算、不受风险上限压制。审计事件记录你的原话（`humanAuthorized`），所以这个决定和其他决定一样能从日志重建。`never` 策略仍然优先 —— 那是管理员的硬禁用，不是审查器的意见。
+- **审查器的规则与之一致** —— 提示词写明记录里的 `[user]` 行是你的原话，其中的明确授权就是决定。这对短语表不认识的写法（其他语言、特殊说法）有用：那时审查器照常运行。
+
+`/auto-review approve` 走同一条路：它直接放行同一工具的下一次请求，不再送审。
 
 ## dsh-eval —— 代理评估引擎
 
@@ -368,7 +388,9 @@ Claude Desktop（`claude_desktop_config.json`）配置示例：
 - 审查器需要可用的 LLM 路由（默认继承）；没有路由时，每次审查都会按 `fallbackPolicy` 回退 —— 绝不会静默放行。
 - `reviewerTools` 中的名称必须是 profile 中已存在的全局工具；未知名称会使审查器子代理在最早点大声失败并回退。
 - 风险规则按各自的 `field` 匹配请求的 `reason`、`toolName` 或脱敏后的调用 `arguments`；其他条件应放入 `toolsPolicy.overrides`。
-- `/auto-review approve` 覆盖授权的是下一次对同一工具的审查，而不是那次确切的历史调用；同一工具上的不同操作也会消耗它。
+- `/auto-review approve` 覆盖授权的是对同一工具的下一次请求，而不是那次确切的历史调用；同一工具上的不同操作也会消耗它。
+- 授权只从你自己的消息中读取（来源为 `user` 的 `user/message` 事件），窗口是本回合与上一回合，且以回合为单位生效：一旦你说过 "make the PR"，执行它的那些调用都放行，而不只放行其中一个。计划任务与其他插件注入的文本不会被当作你的声音；被委派的子会话也不授予任何权限，因为它的 "user" 消息是父代理的提示。
+- 授权短语表只覆盖英文：显式许可、"yes" 类肯定回答，以及带宾语的动作祈使句。其他语言或不常见的说法交给审查器，提示词里写着同一规则——你已授权的就放行。
 - 裁决事件是仅日志的；Web 审查面板读取折叠后的 `autoReview` 投影（原始事件流绝不会到达浏览器插件）。
 - `autoReview/state` 与 `autoReview/verdict` 在支持标记的宿主上以信封 `ignorable: true` 追加，任何 harness 构建都能加载日志 —— 不认识这些仓库外类型的读取方直接跳过这些记录。已发布的 rc 宿主（rc.1–rc.8）上运行时会检测到标记被丢弃并完全不写这些事件（内存镜像继续提供命令、预算、熔断器与 `approve`）；pre-0.5.1 版本污染的会话可用 `dsh-permission-rules` 的 `scripts/repair-session-logs.mjs` 修复（其默认目标集已覆盖全部五种 `autoReview/*` 事件）。
 - git 渠道需要 `dsh` CLI 为 `dsh-auto-review` 打印的那个 `allowBuilds` 键。仓库自带 `pnpm-workspace.yaml`，声明 `allowBuilds: { esbuild: true }`；`typescript` + `tsdown` 是普通 `dependencies`。

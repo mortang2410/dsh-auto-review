@@ -70,6 +70,7 @@ When an action crosses the sandbox boundary, a second model reads the evidence a
 6. **Full audit trail** — log-only `autoReview/verdict` + `autoReview/rejection` session events (envelope `ignorable: true`) plus an optional invariant companion enforcing marker ⟺ event.
 7. **Safety knobs** — a rejection circuit breaker (3 consecutive denials, or 6 of the last 10 verdicts, per turn), a risk-level policy, a one-shot `/auto-review approve` override, and a `never`-policy hard disable that explains itself to the model.
 8. **Optional reviewer context** — a bounded compact transcript (`contextBudget`) plus a Codex-style Markdown ruling policy (`reviewerPolicyText`).
+9. **Your own permission decides** — when you grant permission in your own message ("yes", "go ahead", "make the PR"), the pending call is granted without a reviewer, ahead of the AI budget and the risk clamp. `/auto-review approve` grants the same way.
 
 Every decision reconstructs from the session log: `approval/asked` → `autoReview/verdict` (or `autoReview/rejection`) → `approval/decided`.
 
@@ -190,7 +191,7 @@ Put the configuration in your profile's `cordis.patch.yml`. An **id-targeted ove
 /auto-review on|off|status|approve [n]
 ```
 
-`on`/`off` append the durable `autoReview/state` override (the fold survives restart/resume — replay IS the state) and inject a switch notice the model sees (logged as a `user/message` event). `status` reports the effective state, both per-turn budgets (AI verdicts and reviewer failures), a tripped circuit breaker when one is active, and the session's cumulative statistics (allows/denies/fallbacks/never rejects, mean duration, recent verdicts). `approve [n]` records a single-use `autoReview/override` for the n-th most recent denial (1 = most recent): the next same-tool review within `overrideTtlMs` carries the authorization as reviewer context — the reviewer still decides, and the override is consumed by that review regardless of its outcome.
+`on`/`off` append the durable `autoReview/state` override (the fold survives restart/resume — replay IS the state) and inject a switch notice the model sees (logged as a `user/message` event). `status` reports the effective state, both per-turn budgets (AI verdicts and reviewer failures), a tripped circuit breaker when one is active, and the session's cumulative statistics (allows/denies/fallbacks/never rejects, mean duration, recent verdicts). `approve [n]` records a single-use `autoReview/override` for the n-th most recent denial (1 = most recent): the next same-tool request within `overrideTtlMs` is granted without a reviewer — you authorized it — and the override is consumed by that request whatever its outcome.
 
 ## Web review panel
 
@@ -216,6 +217,13 @@ The panel reads only whole projection values — it never receives the raw sessi
 └───────────────────────┬──────────────────────┘
                         │ yes
                         ▼
+        ┌────────────────────────────────────────┐
+        │ the owner granted permission in this   │
+        │ window (their own words, or a pending  │ ── yes ──▶ allowed-once (no reviewer,
+        │ `/auto-review approve` override)?      │             no risk clamp, no AI budget)
+        └───────────────┬────────────────────────┘
+                        │ no
+                        ▼
         ┌───────────────────────────────────┐
         │ reviewer subagent (fork, one-shot)│
         │  · toolFilter: read/glob/grep     │
@@ -235,6 +243,18 @@ The panel reads only whole projection values — it never receives the raw sessi
 ```
 
 **Composition order.** The answerer runs at its registration position in the waterfall: if a human UI answerer is composed BEFORE the `auto-review` row, humans answer first and the reviewer only sees what is delegated downstream. Verify with `dsh --profile <name> --dump-config` and place the `auto-review` row before your human answerer rows when you want ai-policy tools routed to the reviewer first.
+
+### When the owner has already said yes
+
+The reviewer exists for the moment no human is answering. It must never overrule a human who *is* answering, so the answerer reads the session log for your own grant before it starts a reviewer:
+
+- **What counts** — an explicit permission phrase ("you have my permission", "I approve"), an affirmative answer ("yes", "go ahead", "ship it"), or an imperative that names its object ("make the PR", "push it", "delete them"). A description ("the login page is broken") and a refusal ("not yet", "don't") grant nothing, and a refusal in one clause does not cancel a grant in another.
+- **Where it counts** — the open turn plus the turn before it, which is where an authorization stated a moment earlier lives. A grant is turn-wide: once you have asked for something, the calls that carry it out are the calls you asked for, and singling one out for a second opinion is the bug this path removes.
+- **Who counts** — the owner's own typed messages only. Scheduled prompts declare their own source kind and are never read as your voice, and a delegated session grants nothing because its "user" message is the parent agent's prompt.
+- **What it settles** — `allowed-once`, with no reviewer run, no AI-budget spend and no risk-policy clamp. The audit event records your words (`humanAuthorized`), so the decision reconstructs from the log like every other one. A `never` policy still wins: that is an administrator's hard disable, not a reviewer's opinion.
+- **The reviewer's own rule agrees** — the prompt tells it that an explicit grant in the transcript's `[user]` lines is the decision. That matters for the phrasings the pattern list does not know (another language, an unusual wording), where the reviewer still runs.
+
+`/auto-review approve` takes the same path: it grants the next same-tool request without consulting a reviewer.
 
 ## dsh-eval — agent evaluation engine
 
@@ -371,7 +391,10 @@ The server is read-only and deterministic: no network, no model, no writes.
 - The reviewer needs a working LLM route (inherited by default); without one every review falls back per `fallbackPolicy` — never a silent grant.
 - `reviewerTools` names must exist as global tools in the profile; an unknown name fails the reviewer child loudly at the earliest point and falls back.
 - Risk rules match the request `reason`, the `toolName`, or the redacted call `arguments` per their `field`; other conditions belong in `toolsPolicy.overrides`.
-- The `/auto-review approve` override authorizes the next same-tool review, not the exact historical call; a different action on the same tool consumes it.
+- The `/auto-review approve` override authorizes the next same-tool request, not the exact historical call; a different action on the same tool consumes it.
+- An authorization is read from the owner's own messages only (`user/message` events stamped with the `user` source kind) inside the open turn and the turn before it, and it is turn-wide: once you have said "make the PR", the calls that carry it out are all granted, not one of them. Scheduled prompts and every other plugin kind are never read as your voice, and a delegated session grants nothing — its "user" message is the parent agent's prompt.
+- The grant forms are English: an explicit permission phrase, an affirmative answer, or an imperative that names its object. A grant phrased some other way is left to the reviewer, which the prompt tells to allow what you authorized; a host that speaks another language should extend the pattern list in `src/authorization.ts`.
+- `dsh-client-auto-continue` delivers its continuation text under the `user` kind too. Its shipped defaults do not read as a grant; a host that configures a continuation template containing one ("go ahead") would grant for the rest of that window.
 - The verdict events are log-only; the Web review panel reads the folded `autoReview` projection (the raw event stream never reaches browser plugins).
 - `autoReview/state` and `autoReview/verdict` are appended with the envelope's `ignorable: true` marker on hosts that honor it, so any harness build loads the log — readers that do not know the out-of-repo types simply skip those records. On released rc hosts (rc.1–rc.8) the runtime detects the dropped marker and never writes these events (the in-memory mirror keeps the command, budgets, breaker, and `approve` working for the session); sessions already polluted by pre-0.5.1 versions can be repaired with `scripts/repair-session-logs.mjs` from `dsh-permission-rules` (its default target set covers all five `autoReview/*` event types).
 - The git channel needs the single `allowBuilds` key the `dsh` CLI prints for `dsh-auto-review` itself. The repo ships its own `pnpm-workspace.yaml` with `allowBuilds: { esbuild: true }`; `typescript` + `tsdown` are regular `dependencies`.

@@ -36,6 +36,7 @@ declare module '@deepseek-ai/cordis' {
 // answerer and the `tools/post-execute` deny-reason listener on the context.
 export { apply }
 export { AutoReviewRuntime } from './runtime.ts'
+export * from './authorization.ts'
 export * from './cache.ts'
 export * from './call-id.ts'
 export * from './config.ts'

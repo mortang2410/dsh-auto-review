@@ -59,6 +59,14 @@ declare module '@deepseek-ai/dsh-session/types' {
        */
       escalation?: 'risk-policy'
       /**
+       * Present when authorizing settles the request without a reviewer: the
+       * session owner's own words that granted it (a `/auto-review approve`
+       * override is named as such). Such a verdict is always an `allow` with
+       * `outcome: 'allowed-once'`, carries no risk level because the human
+       * grant outranks the risk clamp, and does not consume the AI budget.
+       */
+      humanAuthorized?: string
+      /**
        * Present when this verdict was replayed from the same-fingerprint
        * cache (no reviewer subagent ran): decision/reason/riskLevel were
        * copied from a recent identical `tool + arguments` verdict within
@@ -367,13 +375,15 @@ export function openTurnVerdicts(events: readonly SessionEvent[]): SessionEventM
  * How many REAL AI verdicts the session's CURRENT open turn has consumed.
  * Fallback verdicts do not count: they are budgeted separately by
  * {@link autoReviewFailuresInOpenTurn}, so a failing reviewer does not eat
- * the AI-decision budget. A turn without `turn/start` (or one already closed
- * by `turn/end`) counts zero.
+ * the AI-decision budget. An authorization grant does not count either: no
+ * reviewer ran for it, so it cannot starve the calls that still need one.
+ * A turn without `turn/start` (or one already closed by `turn/end`) counts
+ * zero.
  * @param events - session events in log order.
- * @returns the decision-carrying verdict count inside the current open turn.
+ * @returns the decision-carrying reviewed verdict count inside the current open turn.
  */
 export function autoReviewsInOpenTurn(events: readonly SessionEvent[]): number {
-  return openTurnVerdicts(events).filter(data => data.decision !== undefined).length
+  return openTurnVerdicts(events).filter(data => data.decision !== undefined && data.humanAuthorized === undefined).length
 }
 
 /**

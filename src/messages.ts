@@ -46,7 +46,7 @@ const EN: Messages = {
   switchedResult: state => `Auto-review ${state} for this session.`,
   approveResult: (toolName, reviewId, minutes) => [
     `Authorized ONE retry of the denied ${toolName} action (review ${reviewId}).`,
-    `The next ${toolName} review within ${minutes} minutes carries this authorization as reviewer context — the reviewer still decides.`,
+    `The next ${toolName} call within ${minutes} minutes is granted without a review — your authorization decides it.`,
   ].join('\n'),
   approveNone: (index, count) => `No recent denial #${index} in this session (${count} recorded).`,
   approveInvalid: arg => `Invalid /auto-review approve index "${arg}". Usage: /auto-review approve [n]`,
@@ -74,7 +74,7 @@ const ZH: Messages = {
   switchedResult: state => `本会话的自动审查已${state}。`,
   approveResult: (toolName, reviewId, minutes) => [
     `已批准对 ${toolName} 被拒操作的一次重试（审查 ${reviewId}）。`,
-    `接下来 ${minutes} 分钟内对 ${toolName} 的下一次审查将携带该授权作为审查上下文——最终仍由审查代理裁决。`,
+    `接下来 ${minutes} 分钟内对 ${toolName} 的下一次调用将直接放行，不再送审——由你的授权决定。`,
   ].join('\n'),
   approveNone: (index, count) => `本会话没有第 ${index} 条近期拒绝记录（共 ${count} 条）。`,
   approveInvalid: arg => `无效的 /auto-review approve 序号 "${arg}"。用法：/auto-review approve [n]`,

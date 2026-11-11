@@ -154,11 +154,10 @@ describe('verdict cache integration', () => {
     expect(harness.subagents.starts).toHaveLength(1)
   })
 
-  it('bypasses the cache when a human override is pending (fresh evidence wins)', async () => {
-    let decision: 'allow' | 'deny' = 'deny'
+  it('grants a pending human override without consulting the cache or the reviewer', async () => {
     const harness = await auditHarness(
       { toolsPolicy: { overrides: { bash: 'ai' } } },
-      () => ({ verdict: { decision, reason: 'x' } }),
+      () => ({ verdict: { decision: 'deny', reason: 'x' } }),
     )
     presentCall(harness, CallId('call-1'), '{"command":"x"}')
     await review(harness, CallId('call-1'))
@@ -167,11 +166,13 @@ describe('verdict cache integration', () => {
       reviewId: denyVerdict?.reviewId,
       toolName: 'bash',
     })
-    decision = 'allow'
     presentCall(harness, CallId('call-2'), '{"command":"x"}')
-    await review(harness, CallId('call-2'))
-    expect(harness.subagents.starts).toHaveLength(2)
-    expect(verdictData(harness)[1]).toMatchObject({ decision: 'allow' })
+    const granted = await review(harness, CallId('call-2'))
+    // The identical call would have replayed the cached deny; the human's
+    // grant settles it before either the cache or a reviewer is consulted.
+    expect(granted).toBe('allowed-once')
+    expect(harness.subagents.starts).toHaveLength(1)
+    expect(verdictData(harness)[1]).toMatchObject({ decision: 'allow', outcome: 'allowed-once' })
     expect(verdictData(harness)[1]).not.toHaveProperty('cached')
   })
 })
