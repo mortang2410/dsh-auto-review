@@ -143,12 +143,15 @@ export function applyAutoReview(state: AutoReviewProjectionState, event: Session
     case 'autoReview/verdict': {
       const data = event.data
       const decision = data.decision !== undefined
+      // A human grant is a decided request but not a review: no reviewer ran,
+      // so it must not spend the AI budget the panel reports against.
+      const reviewed = decision && data.humanAuthorized === undefined
       const failure = data.fallback !== undefined && data.fallback !== 'cancelled'
       const denial = data.decision === 'deny' || data.escalation === 'risk-policy'
       const row = verdictView(data, event.time)
       return {
         ...state,
-        verdictsUsed: state.turnOpen && decision ? state.verdictsUsed + 1 : state.verdictsUsed,
+        verdictsUsed: state.turnOpen && reviewed ? state.verdictsUsed + 1 : state.verdictsUsed,
         failuresUsed: state.turnOpen && failure ? state.failuresUsed + 1 : state.failuresUsed,
         allows: state.allows + (data.decision === 'allow' ? 1 : 0),
         denies: state.denies + (data.decision === 'deny' ? 1 : 0),

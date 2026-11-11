@@ -26,6 +26,17 @@ function allow(reviewId: string, approvalId: string): unknown {
 }
 
 describe('autoReview projection fold', () => {
+  it('counts a human grant as an allow without spending the AI budget', () => {
+    let state = initAutoReviewProjection(true)
+    state = applyAutoReview(state, rawEvent('turn/start', { turn: 1 }))
+    state = applyAutoReview(state, rawEvent('autoReview/verdict', {
+      reviewId: 'g1', approvalId: 'a1', toolName: 'bash', provider: 'human',
+      durationMs: 0, decision: 'allow', reason: 'the user authorized this action: make the PR',
+      humanAuthorized: 'make the PR', outcome: 'allowed-once',
+    }, 1))
+    expect(viewAutoReview(state)).toMatchObject({ verdictsUsed: 0, allows: 1, denies: 0 })
+  })
+
   it('folds state, verdicts, budgets, circuit, and deny rows', () => {
     let state = initAutoReviewProjection(true)
     state = applyAutoReview(state, rawEvent('autoReview/state', { enabled: false }))
