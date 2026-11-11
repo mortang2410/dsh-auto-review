@@ -106,6 +106,16 @@ describe('config resolution', () => {
     expect(() => resolveConfig({ reviewerTools: [] })).toThrow(/reviewerTools/u)
   })
 
+  it('requires reviewerModel whenever reviewerLlmProvider is set', () => {
+    expect(() => resolveConfig({ reviewerLlmProvider: 'deepseek' })).toThrow(TypeError)
+    expect(() => resolveConfig({ reviewerLlmProvider: 'deepseek' })).toThrow(/reviewerLlmProvider.*reviewerModel/u)
+    expect(() => resolveConfig({ reviewerLlmProvider: 'deepseek', reviewerModel: 'deepseek-chat' })).not.toThrow()
+    expect(resolveConfig({ reviewerLlmProvider: 'deepseek', reviewerModel: 'deepseek-chat' })).toMatchObject({
+      reviewerLlmProvider: 'deepseek',
+      reviewerModel: 'deepseek-chat',
+    })
+  })
+
   it('fails loud on invalid circuit/context/override budgets', () => {
     expect(() => resolveConfig({ circuitBreaker: { windowSize: 0 } })).toThrow(/circuitBreaker\.windowSize/u)
     expect(() => resolveConfig({ contextBudget: { turns: -1 } })).toThrow(/contextBudget\.turns/u)

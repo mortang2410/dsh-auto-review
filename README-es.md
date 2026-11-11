@@ -114,6 +114,8 @@ Todas las opciones son campos Schemastery `Config` (modificables desde cordis.ym
 | `riskRules` | `[]` | `{pattern, policy, field?}` emparejado antes de la tabla de herramientas; `field` elige `reason` (por defecto), `toolName` o `arguments` |
 | `reviewerProvider` | `fork` | Proveedor de subagente para el revisor (backend fork en proceso) |
 | `reviewerModel` | *(heredado)* | Id del modelo revisor; si no se define, hereda la ruta del agente de sesión |
+| `reviewerLlmProvider` | *(heredado)* | Proveedor LLM de la ejecución del revisor; si no se define, hereda el proveedor del agente de sesión. Requiere `reviewerModel` |
+| `reviewerReasoningEffort` | *(predeterminado del modelo)* | Esfuerzo de razonamiento de la ejecución del revisor; si no se define, aplica el predeterminado del modelo o el esfuerzo heredado |
 | `reviewerTimeoutMs` | `60000` | Plazo del veredicto; al vencer se aplica la política de fallback |
 | `reviewerTools` | `[read, glob, grep]` | Lista blanca de herramientas del hijo revisor (debe ser no vacía) |
 | `fallbackPolicy` | `rejected` | Ante fallo del revisor: `rejected` (cierre en fallo) / `delegate` / `allow-once` |

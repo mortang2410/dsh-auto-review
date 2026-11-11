@@ -114,6 +114,8 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 | `riskRules` | `[]` | 在工具表之前匹配的 `{pattern, policy, field?}`；`field` 选择 `reason`（默认）、`toolName` 或 `arguments` |
 | `reviewerProvider` | `fork` | 审查器的子代理 provider（进程内 fork 后端） |
 | `reviewerModel` | *(继承)* | 审查器模型 id；不设置则继承会话代理的路由 |
+| `reviewerLlmProvider` | *(继承)* | 审查器运行使用的 LLM provider；不设置则继承会话代理的 provider。需同时设置 `reviewerModel` |
+| `reviewerReasoningEffort` | *(模型默认)* | 审查器运行的推理强度；不设置则沿用模型默认值或继承的强度 |
 | `reviewerTimeoutMs` | `60000` | 裁决截止时间；超时后应用 fallback 策略 |
 | `reviewerTools` | `[read, glob, grep]` | 审查器子代理的工具白名单（必须非空） |
 | `fallbackPolicy` | `rejected` | 审查器失败时的策略：`rejected`（失败关闭）/ `delegate` / `allow-once` |

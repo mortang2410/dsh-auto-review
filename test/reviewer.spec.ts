@@ -52,6 +52,8 @@ function promptConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     riskRules: [],
     reviewerProvider: 'fork',
     reviewerModel: undefined,
+    reviewerLlmProvider: undefined,
+    reviewerReasoningEffort: undefined,
     reviewerTimeoutMs: 60_000,
     reviewerTools: ['read', 'glob', 'grep'],
     fallbackPolicy: 'rejected',
@@ -92,6 +94,8 @@ describe('reviewer prompt', () => {
       riskRules: [{ pattern: 'killall', regex: /killall/u, policy: 'never', field: 'reason' }],
       reviewerProvider: 'fork',
       reviewerModel: undefined,
+      reviewerLlmProvider: undefined,
+      reviewerReasoningEffort: undefined,
       reviewerTimeoutMs: 60_000,
       reviewerTools: ['read', 'glob', 'grep'],
       fallbackPolicy: 'rejected',
@@ -136,6 +140,8 @@ describe('reviewer prompt', () => {
       riskRules: [],
       reviewerProvider: 'fork',
       reviewerModel: undefined,
+      reviewerLlmProvider: undefined,
+      reviewerReasoningEffort: undefined,
       reviewerTimeoutMs: 60_000,
       reviewerTools: ['read', 'glob', 'grep'],
       fallbackPolicy: 'rejected',
@@ -257,6 +263,33 @@ describe('reviewer start request', () => {
       toolName: 'bash',
     }, async () => 'rejected')
     expect(harness.subagents.starts[0]!.request.agentOptions).toBeUndefined()
+  })
+
+  it('passes the configured provider, model, and reasoning effort into the child agent options', async () => {
+    const harness = await mountHarness({
+      toolsPolicy: { overrides: { bash: 'ai' } },
+      reviewerLlmProvider: 'deepseek',
+      reviewerModel: 'deepseek-chat',
+      reviewerReasoningEffort: 'high',
+    })
+    await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+    }, async () => 'rejected')
+    expect(harness.subagents.starts[0]!.request.agentOptions).toEqual({
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'high',
+    })
+  })
+
+  it('sends no agentOptions key when provider, model, and reasoning effort are all unset', async () => {
+    const harness = await mountHarness({ toolsPolicy: { overrides: { bash: 'ai' } } })
+    await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+    }, async () => 'rejected')
+    expect(harness.subagents.starts[0]!.request).not.toHaveProperty('agentOptions')
   })
 })
 

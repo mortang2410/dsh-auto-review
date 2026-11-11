@@ -114,6 +114,8 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 | `riskRules` | `[]` | टूल तालिका से पहले मिलाया गया `{pattern, policy, field?}`; `field` चुनता है `reason` (डिफ़ॉल्ट), `toolName` या `arguments` |
 | `reviewerProvider` | `fork` | समीक्षक का उप-एजेंट प्रदाता (इन-प्रोसेस fork बैकएंड) |
 | `reviewerModel` | *(विरासत)* | समीक्षक मॉडल id; खाली होने पर सत्र एजेंट का मार्ग लेता है |
+| `reviewerLlmProvider` | *(विरासत)* | समीक्षक रन के लिए LLM प्रदाता; खाली होने पर सत्र एजेंट का प्रदाता विरासत में लिया जाता है। `reviewerModel` आवश्यक है |
+| `reviewerReasoningEffort` | *(मॉडल डिफ़ॉल्ट)* | समीक्षक रन के लिए reasoning effort; खाली होने पर मॉडल डिफ़ॉल्ट या विरासत में मिला प्रयास लागू होता है |
 | `reviewerTimeoutMs` | `60000` | निर्णय की समय-सीमा; समाप्ति पर fallback नीति लागू होती है |
 | `reviewerTools` | `[read, glob, grep]` | समीक्षक चाइल्ड की टूल अनुमति-सूची (गैर-रिक्त होनी चाहिए) |
 | `fallbackPolicy` | `rejected` | समीक्षक विफलता: `rejected` (विफल-बंद) / `delegate` / `allow-once` |

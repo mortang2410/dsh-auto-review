@@ -2,6 +2,18 @@
 
 All notable changes to `dsh-auto-review` are documented here. The repo is pre-release; versions follow the DeepSeek Harness `0.1.0-rc.x` target runtime and bump on every behavior change.
 
+## [Unreleased]
+
+### Added
+
+- `reviewerLlmProvider` sets the LLM provider the reviewer run uses. Unset, the reviewer inherits the session agent's provider. It requires `reviewerModel`: setting the provider alone now fails loud at config resolution.
+- `reviewerReasoningEffort` sets the reasoning effort for the reviewer run. Unset, the model default or the inherited effort applies.
+
+### Changed
+
+- The `@deepseek-ai/dsh-*` dependency pins and the `pnpm-workspace.yaml` overrides move from `0.2.1-alpha.1` to `0.2.0-rc.2` to match the installed DSH host.
+
+
 ## [0.12.17] - 2026-10-10
 
 ### Fixed

@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { CallId } from './call-id.ts'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { sessionEvents } from './session-events.ts'
@@ -405,7 +405,13 @@ export async function runReview(
       // The cap equals the reviewer's OWN computed depth (parent depth + 1):
       // the reviewer may run, but any child it tries to spawn would exceed it.
       maxDepth: (request.agent.session.header.delegationDepth ?? 0) + 1,
-      ...config.reviewerModel !== undefined ? { agentOptions: { model: config.reviewerModel } } : {},
+      ...config.reviewerModel !== undefined || config.reviewerLlmProvider !== undefined || config.reviewerReasoningEffort !== undefined
+        ? { agentOptions: {
+          ...config.reviewerLlmProvider !== undefined ? { provider: config.reviewerLlmProvider } : {},
+          ...config.reviewerModel !== undefined ? { model: config.reviewerModel } : {},
+          ...config.reviewerReasoningEffort !== undefined ? { reasoningEffort: config.reviewerReasoningEffort as ReasoningEffortId } : {},
+        } }
+        : {},
     })
     reviewerSessionId = run.id
     reviewerSessions.add(run.id)

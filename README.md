@@ -117,6 +117,8 @@ All tunables are Schemastery `Config` fields (changeable from cordis.yml). An id
 | `riskRules` | `[]` | `{pattern, policy, field?}` matched before the tool table; `field` selects `reason` (default), `toolName`, or `arguments` |
 | `reviewerProvider` | `fork` | Subagent provider for the reviewer (in-process fork backend) |
 | `reviewerModel` | *(inherit)* | Reviewer model id; unset inherits the session agent's route |
+| `reviewerLlmProvider` | *(inherit)* | LLM provider for the reviewer run; unset inherits the session agent's provider. Requires `reviewerModel` |
+| `reviewerReasoningEffort` | *(model default)* | Reasoning effort for the reviewer run; unset keeps the model default or the inherited effort |
 | `reviewerTimeoutMs` | `60000` | Verdict deadline; on expiry the fallback policy applies |
 | `reviewerTools` | `[read, glob, grep]` | The reviewer child's tool allow-list (must be non-empty) |
 | `fallbackPolicy` | `rejected` | Reviewer failure: `rejected` (fail closed) / `delegate` / `allow-once` |

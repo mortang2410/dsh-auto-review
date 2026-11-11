@@ -138,6 +138,10 @@ export interface Config {
   reviewerProvider?: string
   /** Reviewer model id; when unset the reviewer inherits the session agent's route. */
   reviewerModel?: string
+  /** LLM provider the reviewer run uses; when unset the reviewer inherits the session agent's provider. */
+  reviewerLlmProvider?: string
+  /** Reasoning effort for the reviewer run; when unset the chosen model's default applies. */
+  reviewerReasoningEffort?: string
   /** Verdict deadline in milliseconds. Default 60000. */
   reviewerTimeoutMs?: number
   /**
@@ -211,6 +215,8 @@ export interface ResolvedConfig {
   readonly riskRules: readonly ResolvedRiskRule[]
   readonly reviewerProvider: string
   readonly reviewerModel: string | undefined
+  readonly reviewerLlmProvider: string | undefined
+  readonly reviewerReasoningEffort: string | undefined
   readonly reviewerTimeoutMs: number
   readonly reviewerTools: readonly string[]
   readonly fallbackPolicy: FallbackPolicy
@@ -263,6 +269,8 @@ export const Config: z<Config> = z.object({
   })).default([]),
   reviewerProvider: z.string().default('fork'),
   reviewerModel: z.string(),
+  reviewerLlmProvider: z.string(),
+  reviewerReasoningEffort: z.string(),
   reviewerTimeoutMs: z.number().default(60_000),
   reviewerTools: z.array(z.string()).default(['read', 'glob', 'grep']),
   fallbackPolicy: FALLBACK.default('rejected'),
@@ -368,6 +376,9 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
   if (reviewerTools.length === 0) {
     throw new TypeError('reviewerTools must name at least one tool: an empty allow-list would leave the reviewer with no tool face')
   }
+  if (config.reviewerLlmProvider !== undefined && config.reviewerModel === undefined) {
+    throw new TypeError('reviewerLlmProvider requires reviewerModel: a provider alone would send the calling session model id to that provider')
+  }
   const riskRules = (config.riskRules ?? []).map((rule): ResolvedRiskRule => {
     let regex: RegExp
     try {
@@ -388,6 +399,8 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     riskRules,
     reviewerProvider: config.reviewerProvider ?? 'fork',
     reviewerModel: config.reviewerModel,
+    reviewerLlmProvider: config.reviewerLlmProvider,
+    reviewerReasoningEffort: config.reviewerReasoningEffort,
     reviewerTimeoutMs: config.reviewerTimeoutMs ?? 60_000,
     reviewerTools,
     fallbackPolicy: config.fallbackPolicy ?? 'rejected',
