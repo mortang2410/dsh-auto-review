@@ -67,6 +67,14 @@ declare module '@deepseek-ai/dsh-session/types' {
        */
       humanAuthorized?: string
       /**
+       * Present when the REVIEWER's allow rested on an explicit grant from the
+       * session owner in the transcript (`[user]` lines): the verdict is an
+       * `allow` that settled `allowed-once` past the risk clamp, and it names
+       * no reviewer override. Unlike `humanAuthorized` it consumed a reviewer
+       * run, so it still counts against the AI budget.
+       */
+      ownerGrant?: true
+      /**
        * Present when this verdict was replayed from the same-fingerprint
        * cache (no reviewer subagent ran): decision/reason/riskLevel were
        * copied from a recent identical `tool + arguments` verdict within

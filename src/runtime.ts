@@ -551,6 +551,7 @@ export class AutoReviewRuntime {
             decision: resolution.decision,
             reason: resolution.reason,
             ...resolution.riskLevel !== undefined ? { riskLevel: resolution.riskLevel } : {},
+            ...resolution.ownerGrant === true ? { ownerGrant: true as const } : {},
           }, started)
         }
       }
@@ -562,7 +563,11 @@ export class AutoReviewRuntime {
       return this.finish(request, approvalId, resolution, next, durationMs)
     }
     const reviewId = newVerdictId()
+    // An allow that rests on an explicit owner grant is never clamped: the
+    // owner's permission is the decision, and the risk policy only bounds
+    // what the reviewer decides on its own.
     const overridden = resolution.decision === 'allow'
+      && resolution.ownerGrant !== true
       && resolution.riskLevel !== undefined
       && riskExceeds(resolution.riskLevel, this.config.riskPolicy.maxAutoAllow)
     const outcome: ApprovalOutcome | undefined = overridden
@@ -582,6 +587,7 @@ export class AutoReviewRuntime {
         decision: resolution.decision,
         reason: resolution.reason,
         ...resolution.riskLevel !== undefined ? { riskLevel: resolution.riskLevel } : {},
+        ...resolution.ownerGrant === true ? { ownerGrant: true } : {},
         ...overridden ? { escalation: 'risk-policy' } : {},
         ...outcome !== undefined ? { outcome } : {},
         ...cached ? { cached: true } : {},

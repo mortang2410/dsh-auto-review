@@ -22,6 +22,14 @@
  * once the owner has said "make the PR", the calls that carry that out are the
  * calls they asked for, and singling out one of them for a second opinion would
  * reproduce the bug this module exists to remove.
+ *
+ * Three readings keep that rule honest. A later message that refuses without
+ * granting revokes an earlier grant ("make the PR" then "don't create the
+ * PR"). A negated permission statement is never a grant ("you have no
+ * permission to push it"), because it contains the same words in the opposite
+ * sense. And a bare "yes" counts only as a terse answer, not as part of a
+ * statement about the code ("yes, the branch is main"), because the owner is
+ * answering a question there, not authorizing work.
  * @module dsh-auto-review/authorization
  */
 
@@ -44,13 +52,19 @@ const REFUSAL = /\b(?:don['’]?t|do not|not yet|not now|not sure|hold (?:on|off
 const LEADING_NO = /^\s*no\b/iu
 
 /**
- * The grant forms, one pattern per way a human states permission. Every entry
- * is a deliberate statement about the work in flight: an explicit permission
- * phrase, an affirmative answer, or an imperative that names the object it acts
+ * A negated permission statement: "you have no permission", "I have no
+ * approval", "not approved". These contain the words the grant patterns look
+ * for, so they are skipped before any pattern runs.
+ */
+const NEGATED = /\b(?:no|not|never|without)\b[^.!?\n]{0,24}\b(?:permission|approval|consent|authori[sz](?:ation|ed|e)|approved|allowed)\b/iu
+
+/**
+ * The grant forms that are a deliberate statement about the work in flight: an
+ * explicit permission phrase, or an imperative that names the object it acts
  * on. A description of a problem ("the login page is broken") matches none of
  * them, so it authorizes nothing.
  */
-const GRANTS: readonly RegExp[] = [
+const EXPLICIT: readonly RegExp[] = [
   // "I give you permission", "you have my approval", "permission granted".
   /\b(?:i|we|you)\s+(?:hereby\s+)?(?:give|gave|grant|granted|have|has|get|got)\b[^.!?\n]{0,40}\b(?:permission|approval|consent|authori[sz]ation)\b/iu,
   /\b(?:permission|approval|authori[sz]ation)\s+(?:is\s+|was\s+)?(?:granted|given)\b/iu,
@@ -59,13 +73,6 @@ const GRANTS: readonly RegExp[] = [
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
   /\bapproved\b/iu,
-  // Affirmative answers.
-  /\byes\b/iu,
-  /\byeah\b/iu,
-  /\byep\b/iu,
-  /\bsure\b/iu,
-  /\babsolutely\b/iu,
-  /\bdefinitely\b/iu,
   /\bgo\s+ahead\b/iu,
   /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,
@@ -76,6 +83,32 @@ const GRANTS: readonly RegExp[] = [
   // An imperative that names its object: "make the PR", "push it", "delete them".
   /\b(?:make|create|open|push|merge|send|publish|deploy|post|upload|delete|remove|drop|kill|restart|run|execute|install|commit|reset|force|write|edit|move|copy|rename|chmod|fix|apply|update|revert)\s+(?:the|a|an|this|that|these|those|it|its|it'?s|them|all|my|your)\b/iu,
 ]
+
+/**
+ * Bare affirmative answers ("yes", "sure"). Unlike the explicit forms these
+ * also appear in ordinary statements, so one counts only when the clause is
+ * terse and carries no copula or auxiliary: "yes, go ahead" answers, while
+ * "yes, the branch is main" describes the code and grants nothing.
+ */
+const AFFIRMATIVES: readonly RegExp[] = [
+  /\byes\b/iu,
+  /\byeah\b/iu,
+  /\byep\b/iu,
+  /\bsure\b/iu,
+  /\babsolutely\b/iu,
+  /\bdefinitely\b/iu,
+]
+
+/** A copula or auxiliary marks a statement of fact rather than an answer. */
+const DECLARATIVE = /\b(?:is|are|was|were|has|have|had|will|would|can|could|should|may|might|must)\b/iu
+
+/** An affirmative answer is at most this many words; longer text carries content. */
+const AFFIRMATIVE_MAX_WORDS = 8
+
+/** Whether a clause reads as a bare answer rather than a statement of fact. */
+function isBareAnswer(clause: string): boolean {
+  return clause.split(/\s+/u).length <= AFFIRMATIVE_MAX_WORDS && !DECLARATIVE.test(clause)
+}
 
 /**
  * Extract the text a message carries.
@@ -100,11 +133,23 @@ export function authorizationQuote(text: string): string | undefined {
   // object ("make the PR") is often prefixed by an aside ("after lunch, ").
   for (const clause of text.split(/[.!?\n]+/u)) {
     const trimmed = clause.trim()
-    if (trimmed === '' || REFUSAL.test(trimmed)) continue
-    if (!GRANTS.some(pattern => pattern.test(trimmed))) continue
+    if (trimmed === '' || REFUSAL.test(trimmed) || NEGATED.test(trimmed)) continue
+    if (!EXPLICIT.some(pattern => pattern.test(trimmed)) && !(AFFIRMATIVES.some(pattern => pattern.test(trimmed)) && isBareAnswer(trimmed))) continue
     return trimmed.length <= QUOTE_MAX_CHARS ? trimmed : `${trimmed.slice(0, QUOTE_MAX_CHARS)}…`
   }
   return undefined
+}
+
+/**
+ * Whether the owner's message withdraws or refuses something. A message that
+ * grants nothing but states a refusal revokes any earlier grant in the window:
+ * "make the PR" followed by "don't create the PR" is not still a grant.
+ * @param text - one human message.
+ * @returns true when the message refuses, postpones, or denies.
+ */
+export function statesRefusal(text: string): boolean {
+  if (LEADING_NO.test(text)) return true
+  return text.split(/[.!?\n]+/u).some(clause => REFUSAL.test(clause))
 }
 
 /** One recorded human authorization. */
@@ -139,8 +184,12 @@ export function findUserAuthorization(events: readonly SessionEvent[], delegatio
     }
     if (event.type !== 'user/message') continue
     if (event.data.source?.kind !== 'user') continue
-    const quote = authorizationQuote(textOf(event.data.content))
+    const text = textOf(event.data.content)
+    const quote = authorizationQuote(text)
     if (quote !== undefined) return { quote, seq: event.seq }
+    // A later refusal revokes an earlier grant: the owner changed their mind,
+    // and continuing past this message would settle on words they withdrew.
+    if (statesRefusal(text)) return undefined
   }
   return undefined
 }

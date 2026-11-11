@@ -218,6 +218,18 @@ describe('verdict schema and parsing', () => {
     expect(parseVerdict('nope', 100)).toBeUndefined()
   })
 
+  it('carries a reviewer-recognized owner grant and refuses a non-boolean marker', () => {
+    expect(parseVerdict({ decision: 'allow', reason: 'the owner granted it', riskLevel: 'high', ownerGrant: true }, 100)).toMatchObject({
+      decision: 'allow',
+      ownerGrant: true,
+      riskLevel: 'high',
+    })
+    expect(parseVerdict({ decision: 'allow', reason: 'x', ownerGrant: 'yes' }, 100)).toBeUndefined()
+    expect(parseVerdict({ decision: 'allow', reason: 'x', ownerGrant: false }, 100)).toBeUndefined()
+    // Without the marker the verdict is unchanged.
+    expect(parseVerdict({ decision: 'allow', reason: 'x' }, 100)?.ownerGrant).toBeUndefined()
+  })
+
   it('truncates the verdict reason to the configured budget', () => {
     expect(parseVerdict({ decision: 'deny', reason: 'r'.repeat(50) }, 10)?.reason).toBe('rrrrrrrrrr…')
   })

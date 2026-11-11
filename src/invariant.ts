@@ -160,6 +160,26 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
         if (data.riskLevel !== undefined) {
           fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries a riskLevel alongside a humanAuthorized grant`)
         }
+        if (data.provider !== 'human') {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries a humanAuthorized grant with provider ${JSON.stringify(data.provider)}`)
+        }
+      }
+      if (data.ownerGrant !== undefined) {
+        // The reviewer's allow rested on an explicit owner grant: the call
+        // settles by itself, so it is always an allow that settled and never
+        // an escalation (the risk clamp does not apply to it).
+        if (data.ownerGrant !== true) {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} has invalid ownerGrant ${JSON.stringify(data.ownerGrant)}`)
+        }
+        if (data.decision !== 'allow') {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries an ownerGrant on a ${JSON.stringify(data.decision)} verdict`)
+        }
+        if (data.outcome !== 'allowed-once') {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries an ownerGrant that did not settle allowed-once`)
+        }
+        if (data.escalation !== undefined) {
+          fail(`autoReview/verdict ${JSON.stringify(data.reviewId)} carries an ownerGrant alongside escalation ${JSON.stringify(data.escalation)}`)
+        }
       }
       if (data.escalation !== undefined) {
         // The only escalation today: the risk policy overrode an allow. It

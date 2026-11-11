@@ -100,6 +100,22 @@ describe('authorizationQuote', () => {
     expect(grant('yes but not yet')).toBeUndefined()
   })
 
+  it('refuses a negated permission statement', () => {
+    // These carry the words a grant pattern looks for, in the opposite sense.
+    expect(grant('you have no permission to push it')).toBeUndefined()
+    expect(grant('I have no approval for that')).toBeUndefined()
+    expect(grant('not approved')).toBeUndefined()
+    expect(grant('you are not authorized to do that')).toBeUndefined()
+  })
+
+  it('reads a bare affirmative only as an answer, not inside a statement of fact', () => {
+    expect(grant('yes')).toBeDefined()
+    expect(grant('yes please')).toBeDefined()
+    // The owner answered a factual question; that is not a grant.
+    expect(grant('Yes, the branch is main')).toBeUndefined()
+    expect(grant('sure, the build was green yesterday')).toBeUndefined()
+  })
+
   it('bounds the recorded quote', () => {
     const quote = grant(`yes ${'x'.repeat(500)}`)
     expect(quote).toBeDefined()
@@ -133,6 +149,17 @@ describe('findUserAuthorization', () => {
     const harness = await mountHarness()
     say(harness.session, 'make the PR')
     expect(findUserAuthorization(harness.session.snapshotEvents(), 1)).toBeUndefined()
+  })
+
+  it('revokes an earlier grant when the owner later refuses', async () => {
+    const harness = await mountHarness()
+    append(harness.session, 'turn/start', { turn: 1 })
+    say(harness.session, 'make the PR')
+    append(harness.session, 'turn/end', { turn: 1 })
+    append(harness.session, 'turn/start', { turn: 2 })
+    say(harness.session, "don't create the PR")
+    // The later message withdraws the grant; the older words do not survive it.
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
   })
 })
 
@@ -203,6 +230,55 @@ describe('the answerer honours the owner', () => {
     }, rejected)
     expect(outcome).toBe('rejected')
     expect(harness.subagents.starts).toHaveLength(1)
+  })
+
+  it('sends a revoked grant back to the reviewer', async () => {
+    const harness = await mountHarness(
+      { toolsPolicy: { overrides: { bash: 'ai' } } },
+      () => ({ verdict: { decision: 'deny', reason: 'the owner withdrew the grant' } }),
+    )
+    append(harness.session, 'turn/start', { turn: 1 })
+    say(harness.session, 'make the PR')
+    append(harness.session, 'turn/end', { turn: 1 })
+    append(harness.session, 'turn/start', { turn: 2 })
+    say(harness.session, "don't create the PR")
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      reason: 'gh pr create',
+    }, rejected)
+    expect(outcome).toBe('rejected')
+    expect(harness.subagents.starts).toHaveLength(1)
+  })
+
+  it('keeps a reviewer-recognized grant past the risk clamp', async () => {
+    // The owner's wording is not in the pattern list, so the reviewer runs and
+    // sees it; its allow names the grant and must not be clamped.
+    const riskyGrant = () => ({
+      verdict: { decision: 'allow' as const, reason: 'the owner granted this in the transcript', riskLevel: 'high' as const, ownerGrant: true as const },
+    })
+    const harness = await auditHarness({
+      toolsPolicy: { overrides: { bash: 'ai' } },
+      riskPolicy: { maxAutoAllow: 'low', onHighRisk: 'deny' },
+    }, riskyGrant)
+    say(harness.session, 'you may go right ahead with it, it is fine')
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      reason: 'gh pr create',
+    }, rejected)
+    expect(outcome).toBe('allowed-once')
+    expect(harness.subagents.starts).toHaveLength(1)
+    const verdict = harness.session.snapshotEvents()
+      .filter(event => event.type === 'autoReview/verdict')
+      .at(-1)
+    expect(verdict?.data).toMatchObject({
+      decision: 'allow',
+      outcome: 'allowed-once',
+      ownerGrant: true,
+      riskLevel: 'high',
+    })
+    expect(verdict?.data.escalation).toBeUndefined()
   })
 
   it('does not count a grant against the AI budget fold', async () => {

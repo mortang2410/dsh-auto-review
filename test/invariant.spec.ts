@@ -289,6 +289,66 @@ describe.skipIf(InvariantRegistry === undefined)('auto-review invariants', () =>
     }).toThrow(/did not settle allowed-once/u)
   })
 
+  it('requires the human provider on a grant and validates a reviewer-recognized grant', async () => {
+    const { session } = await mount()
+    session.append('approval/asked', { id: ApprovalRequestId('a-grant-fork'), toolName: 'bash' })
+    expect(() => {
+      session.append('autoReview/verdict', {
+        reviewId: AutoReviewVerdictId('r-grant-fork'),
+        approvalId: ApprovalRequestId('a-grant-fork'),
+        toolName: 'bash',
+        provider: 'fork',
+        durationMs: 0,
+        decision: 'allow',
+        reason: 'the user authorized this action: make the PR',
+        humanAuthorized: 'make the PR',
+        outcome: 'allowed-once',
+      })
+    }).toThrow(/humanAuthorized grant with provider/u)
+    // The same record with the human provider is valid.
+    session.append('approval/asked', { id: ApprovalRequestId('a-grant-human'), toolName: 'bash' })
+    session.append('autoReview/verdict', {
+      reviewId: AutoReviewVerdictId('r-grant-human'),
+      approvalId: ApprovalRequestId('a-grant-human'),
+      toolName: 'bash',
+      provider: 'human',
+      durationMs: 0,
+      decision: 'allow',
+      reason: 'the user authorized this action: make the PR',
+      humanAuthorized: 'make the PR',
+      outcome: 'allowed-once',
+    })
+    session.append('approval/asked', { id: ApprovalRequestId('a-ownergrant-bad'), toolName: 'bash' })
+    expect(() => {
+      session.append('autoReview/verdict', {
+        reviewId: AutoReviewVerdictId('r-ownergrant-bad'),
+        approvalId: ApprovalRequestId('a-ownergrant-bad'),
+        toolName: 'bash',
+        provider: 'fork',
+        durationMs: 1,
+        decision: 'deny',
+        reason: 'no',
+        ownerGrant: true,
+        outcome: 'rejected',
+      })
+    }).toThrow(/ownerGrant/u)
+    // A reviewer-recognized grant settles an allow and carries the risk level
+    // the reviewer reported; the clamp does not apply to it.
+    session.append('approval/asked', { id: ApprovalRequestId('a-ownergrant-good'), toolName: 'bash' })
+    session.append('autoReview/verdict', {
+      reviewId: AutoReviewVerdictId('r-ownergrant-good'),
+      approvalId: ApprovalRequestId('a-ownergrant-good'),
+      toolName: 'bash',
+      provider: 'fork',
+      durationMs: 1,
+      decision: 'allow',
+      reason: 'the owner granted this in the transcript',
+      riskLevel: 'high',
+      ownerGrant: true,
+      outcome: 'allowed-once',
+    })
+  })
+
   it('accepts an override referencing a deny verdict and fails an orphan', async () => {
     const { session } = await mount()
     session.append('approval/asked', { id: ApprovalRequestId('a-over'), toolName: 'bash' })
