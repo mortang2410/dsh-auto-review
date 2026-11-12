@@ -119,6 +119,7 @@ describe('authorizationQuote', () => {
 
   it('does not read a try as permission', () => {
     expect(grant("I'll give it a try")).toBeUndefined()
+    expect(grant("Yes, I'll give it a try")).toBeUndefined()
     expect(grant('YES I FUCKIGN GIVE IT / GO')).toBe('YES I FUCKIGN GIVE IT / GO')
   })
 
@@ -202,6 +203,9 @@ describe('findUserAuthorization', () => {
     expect(grantCoversRequest('May I push the branch now?', 'bash gh pr create for this branch')).toBe(false)
     expect(grantCoversRequest('May I push the branch now?', 'bash git push origin main')).toBe(true)
     expect(grantCoversRequest('May I delete the logs now?', 'bash rm -rf ./logs')).toBe(true)
+    // The same class is not enough when the object differs.
+    expect(grantCoversRequest('May I delete the logs now?', 'bash rm -rf ./secrets')).toBe(false)
+    expect(grantCoversRequest('May I push the branch now?', 'bash git merge origin/main')).toBe(false)
   })
 
   it('grants nothing for a bare yes with no question to answer', async () => {
@@ -436,6 +440,49 @@ describe('the answerer honours the owner', () => {
       toolName: 'bash',
       callId: CallId('call-1'),
       reason: 'gh pr create',
+    }, rejected)
+    expect(outcome).toBe('rejected')
+    expect(harness.subagents.starts).toHaveLength(1)
+  })
+
+  it('does not read a same-class answer as cover for another object', async () => {
+    // "May I delete the logs?" is not permission to remove the secrets.
+    const harness = await auditHarness(
+      { toolsPolicy: { overrides: { bash: 'ai' } } },
+      () => ({ verdict: { decision: 'deny', reason: 'that is not what the owner approved' } }),
+    )
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'May I delete the logs now?' }] },
+    })
+    say(harness.session, 'yes')
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      callId: CallId('call-3'),
+      reason: 'rm -rf ./secrets',
+    }, rejected)
+    expect(outcome).toBe('rejected')
+    expect(harness.subagents.starts).toHaveLength(1)
+  })
+
+  it('does not read a push answer as cover for a merge', async () => {
+    const harness = await auditHarness(
+      { toolsPolicy: { overrides: { bash: 'ai' } } },
+      () => ({ verdict: { decision: 'deny', reason: 'merging was not approved' } }),
+    )
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'May I push the branch now?' }] },
+    })
+    say(harness.session, 'yes')
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      callId: CallId('call-4'),
+      reason: 'git merge origin/main',
     }, rejected)
     expect(outcome).toBe('rejected')
     expect(harness.subagents.starts).toHaveLength(1)

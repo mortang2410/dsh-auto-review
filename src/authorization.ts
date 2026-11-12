@@ -74,7 +74,7 @@ const EXPLICIT: readonly RegExp[] = [
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
   /\bapproved\b/iu,
-  /\byes\b[^.!?\n]{0,40}\bgive\s+(?:it|them|you)\b/iu,
+  /\byes\b[^.!?\n]{0,40}\bgive\s+(?:it|them|you)\b(?!\s+(?:a|another)\s+(?:try|shot))/iu,
   /\bgo\s+ahead\b/iu,
   /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,
@@ -280,7 +280,7 @@ function parseAction(clause: string): ParsedAction | undefined {
   if (verbIndex < 0) return undefined
   const tail = words.slice(verbIndex + 1)
   const anaphorWord = tail.find(word => ANAPHORS.has(word))
-  const object = tail.find(word => !FILLER.has(word) && !PREPOSITION.has(word) && !ANAPHORS.has(word))
+  const object = tail.find(word => !FILLER.has(word) && !PREPOSITION.has(word) && !ANAPHORS.has(word) && !word.startsWith('-'))
   return {
     verb: words[verbIndex]!,
     classIndex: actionClass(words[verbIndex]!),
@@ -368,7 +368,12 @@ export function grantCoversRequest(subject: string, requestText: string): boolea
   if (asked === undefined) return false
   const request = parseAction(requestText)
   if (request === undefined) return false
-  return sameWork(asked, request)
+  // The same verb is the same act on whatever it is applied to. Otherwise the
+  // objects have to agree too: "delete the logs" answers an rm of the logs,
+  // not an rm of the secrets, and never a merge of another branch.
+  if (asked.verb === request.verb) return true
+  if (asked.classIndex !== request.classIndex) return false
+  return asked.object !== undefined && asked.object === request.object
 }
 
 /** One recorded human authorization. */
