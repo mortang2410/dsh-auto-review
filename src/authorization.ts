@@ -74,7 +74,7 @@ const EXPLICIT: readonly RegExp[] = [
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
   /\bapproved\b/iu,
-  /\byes\b[^.!?\n]{0,40}\bgive\s+(?:it|them|you)\b(?!\s+(?:a|another)\s+(?:try|shot))/iu,
+  /\byes\b(?:(?!\bi['’](?:ll|m)\b|\bi will\b|\bi am\b)[^.!?\n]){0,40}\bgive\s+(?:it|them|you)\b(?!\s+(?:a|another)\s+(?:try|shot))/iu,
   /\bgo\s+ahead\b/iu,
   /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,

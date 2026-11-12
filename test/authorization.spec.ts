@@ -117,9 +117,13 @@ describe('authorizationQuote', () => {
     expect(grant('sure, the build was green yesterday')).toBeUndefined()
   })
 
-  it('does not read a try as permission', () => {
+  it('does not read a promise to attempt as permission', () => {
     expect(grant("I'll give it a try")).toBeUndefined()
     expect(grant("Yes, I'll give it a try")).toBeUndefined()
+    expect(grant("Yes, I'll give it a go")).toBeUndefined()
+    expect(grant("Yes, I'll give it another go")).toBeUndefined()
+    // The owner telling the agent to go is still a grant, and so is the incident.
+    expect(grant('Yes, give it a go')).toBeDefined()
     expect(grant('YES I FUCKIGN GIVE IT / GO')).toBe('YES I FUCKIGN GIVE IT / GO')
   })
 
