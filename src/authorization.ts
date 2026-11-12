@@ -74,7 +74,7 @@ const EXPLICIT: readonly RegExp[] = [
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
   /\bapproved\b/iu,
-  /\bgive\s+(?:it|them|you)\b/iu,
+  /\byes\b[^.!?\n]{0,40}\bgive\s+(?:it|them|you)\b/iu,
   /\bgo\s+ahead\b/iu,
   /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,
@@ -197,7 +197,7 @@ export function authorizationQuote(text: string, question?: string): string | un
 const ACTION_CLASSES: readonly (readonly string[])[] = [
   ['make', 'create', 'open', 'build', 'produce', 'generate', 'draft'],
   ['push', 'merge', 'send', 'publish', 'deploy', 'upload', 'post', 'release', 'tag', 'share'],
-  ['delete', 'remove', 'drop', 'kill', 'close', 'destroy', 'discard'],
+  ['delete', 'remove', 'drop', 'kill', 'close', 'destroy', 'discard', 'rm'],
   ['write', 'edit', 'update', 'fix', 'apply', 'patch', 'change', 'rewrite'],
   ['run', 'execute', 'install', 'commit', 'reset', 'force', 'revert', 'restart', 'test'],
 ]
@@ -246,8 +246,16 @@ function isPlural(word: string): boolean {
   return word.endsWith('s') && !word.endsWith('ss')
 }
 
+/** Verbs that deliver a created thing; a creation grant covers them too. */
+const DELIVERY = new Set<string>(['push', 'merge', 'send', 'publish', 'deploy', 'upload', 'post', 'release', 'tag', 'share'])
+
+/** The creation class, whose grants extend to {@link DELIVERY}. */
+const CREATE_CLASS = 0
+
 /** A parsed action: what is done, and to what. */
 interface ParsedAction {
+  /** The work verb itself. */
+  readonly verb: string
   /** Index into {@link ACTION_CLASSES}. */
   readonly classIndex: number
   /** The object's head noun when the clause names one. */
@@ -274,10 +282,23 @@ function parseAction(clause: string): ParsedAction | undefined {
   const anaphorWord = tail.find(word => ANAPHORS.has(word))
   const object = tail.find(word => !FILLER.has(word) && !PREPOSITION.has(word) && !ANAPHORS.has(word))
   return {
+    verb: words[verbIndex]!,
     classIndex: actionClass(words[verbIndex]!),
     ...object === undefined ? {} : { object },
     ...anaphorWord === undefined ? {} : { anaphor: PLURAL_ANAPHORS.has(anaphorWord) ? 'plural' : 'singular' },
   }
+}
+
+/**
+ * Whether two actions are the same work: the same class, or a creation grant
+ * being carried out by delivering what was created.
+ * @param granted - the action the grant authorizes.
+ * @param other - the action being compared to it.
+ * @returns true when they are the same job.
+ */
+function sameWork(granted: ParsedAction, other: ParsedAction): boolean {
+  if (other.classIndex === granted.classIndex) return true
+  return granted.classIndex === CREATE_CLASS && DELIVERY.has(other.verb)
 }
 
 /**
@@ -325,11 +346,12 @@ export function revokesGrant(text: string, grant: string, history: readonly stri
     if (!REFUSAL.test(clause) && !LEADING_NO.test(clause)) return false
     const refusal = parseAction(clause)
     if (refusal === undefined) return false
+    if (!sameWork(granted, refusal)) return false
     if (refusal.anaphor !== undefined) {
       return resolveAntecedent(history, refusal.anaphor) === granted.object
     }
     if (refusal.object === undefined || granted.object === undefined) return false
-    return refusal.classIndex === granted.classIndex && refusal.object === granted.object
+    return refusal.object === granted.object
   })
 }
 
@@ -342,10 +364,11 @@ export function revokesGrant(text: string, grant: string, history: readonly stri
  * @returns true when the question names part of the request.
  */
 export function grantCoversRequest(subject: string, requestText: string): boolean {
-  const requestWords = new Set(contentWords(requestText).map(word => isPlural(word) ? word.slice(0, -1) : word))
-  return contentWords(subject)
-    .map(word => isPlural(word) ? word.slice(0, -1) : word)
-    .some(word => word.length >= 3 && requestWords.has(word))
+  const asked = parseAction(subject)
+  if (asked === undefined) return false
+  const request = parseAction(requestText)
+  if (request === undefined) return false
+  return sameWork(asked, request)
 }
 
 /** One recorded human authorization. */

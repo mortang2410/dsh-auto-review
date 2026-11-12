@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { CallId } from './call-id.ts'
-import { authorizationQuote, autoReviewsInOpenTurn, findUserAuthorization, revokesGrant } from '../src/index.ts'
+import { authorizationQuote, autoReviewsInOpenTurn, findUserAuthorization, grantCoversRequest, revokesGrant } from '../src/index.ts'
 import {
   dispatchAskedApproval,
   mountHarness,
@@ -117,6 +117,11 @@ describe('authorizationQuote', () => {
     expect(grant('sure, the build was green yesterday')).toBeUndefined()
   })
 
+  it('does not read a try as permission', () => {
+    expect(grant("I'll give it a try")).toBeUndefined()
+    expect(grant('YES I FUCKIGN GIVE IT / GO')).toBe('YES I FUCKIGN GIVE IT / GO')
+  })
+
   it('bounds the recorded quote', () => {
     const quote = grant(`yes ${'x'.repeat(500)}`)
     expect(quote).toBeDefined()
@@ -137,6 +142,7 @@ describe('revokesGrant', () => {
   it('does not withdraw the same object through a different action', () => {
     // Closing a PR is not making one, even though both name it.
     expect(revokesGrant("don't close the PR", 'make the PR')).toBe(false)
+    expect(revokesGrant("don't close it", 'make the PR')).toBe(false)
     // "them" resolves to the logs the owner mentioned, not to the singular PR.
     expect(revokesGrant("don't delete them", 'make the PR', ['The logs are noisy. Keep them for audit.', 'make the PR'])).toBe(false)
   })
@@ -190,6 +196,12 @@ describe('findUserAuthorization', () => {
     say(harness.session, "don't create the PR")
     // The later message withdraws the grant; the older words do not survive it.
     expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
+  })
+
+  it('binds an answer to the action the question named, not to a shared noun', () => {
+    expect(grantCoversRequest('May I push the branch now?', 'bash gh pr create for this branch')).toBe(false)
+    expect(grantCoversRequest('May I push the branch now?', 'bash git push origin main')).toBe(true)
+    expect(grantCoversRequest('May I delete the logs now?', 'bash rm -rf ./logs')).toBe(true)
   })
 
   it('grants nothing for a bare yes with no question to answer', async () => {
