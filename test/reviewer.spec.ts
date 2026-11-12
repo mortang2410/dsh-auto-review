@@ -481,6 +481,22 @@ describe('compact transcript context', () => {
     expect(section).toContain('command-19')
   })
 
+  it('keeps an early approval when the owner says more afterwards', () => {
+    // The window bounds how much the owner can say; nothing else may drop the
+    // approval that came first.
+    const later = Array.from({ length: 5 }, (_, n) => ({
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: `update ${n} ${'y'.repeat(280)}` }] },
+    }))
+    const session = sessionWithEvents([
+      { type: 'turn/start', data: { turn: 1 } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'I explicitly approve deleting the release data.' }] } },
+      ...later,
+    ])
+    const section = buildContextSection(session.snapshotEvents(), { turns: 1, maxChars: 200 })
+    expect(section).toContain('I explicitly approve deleting the release data.')
+  })
+
   it('never presents a scheduled prompt as the owner', () => {
     const session = sessionWithEvents([
       { type: 'turn/start', data: { turn: 1 } },

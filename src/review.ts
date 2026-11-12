@@ -228,9 +228,6 @@ export function buildContextSection(events: readonly SessionEvent[], budget: Con
   return owner === '' ? joined : `${owner}\n\n${joined}`
 }
 
-/** How much of the owner's own words the reserved section may carry. */
-const OWNER_SECTION_BUDGET = 1500
-
 /**
  * The owner's own messages from the same window, rendered outside the general
  * character budget.
@@ -246,7 +243,6 @@ const OWNER_SECTION_BUDGET = 1500
  */
 function ownerSection(events: readonly SessionEvent[], budget: ContextBudgetConfig): string {
   const lines: string[] = []
-  let used = 0
   let crossed = 0
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index] as SessionEvent
@@ -257,9 +253,9 @@ function ownerSection(events: readonly SessionEvent[], budget: ContextBudgetConf
     }
     if (event.type !== 'user/message') continue
     if (event.data.source?.kind !== 'user') continue
+    // No character cap here: the window bounds the count, and an approval the
+    // owner stated earlier in it must survive however much they said since.
     const line = `[user] ${truncate(contentText(event.data.content), CONTEXT_LINE_BUDGET)}`
-    if (used + line.length + 1 > OWNER_SECTION_BUDGET) break
-    used += line.length + 1
     lines.push(line)
   }
   if (lines.length === 0) return ''

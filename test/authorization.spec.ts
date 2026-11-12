@@ -103,8 +103,13 @@ describe('findReviewerOff', () => {
   it('does not treat prose about the word as the switch', () => {
     expect(off('YOLO is the branch name, not permission to bypass review.')).toBeUndefined()
     expect(off('YOLO means you only live once')).toBeUndefined()
-    expect(off('YOLO and the tests are green')).toBeUndefined()
+    // Accepted cost of allowing conjunctions: an owner sentence that opens with
+    // the word still counts. The switch is his, and refusing a real instruction
+    // ("YOLO and ship the release") is worse than this rare miss.
+    expect(off('YOLO and the tests are green')).toBe('YOLO and the tests are green')
     expect(off('YOLO fix the flaky test')).toBe('YOLO fix the flaky test')
+    // A conjunction is an instruction too, not a description of the word.
+    expect(off('YOLO and ship the release')).toBe('YOLO and ship the release')
   })
 })
 

@@ -36,9 +36,11 @@ const QUOTE_MAX_CHARS = 200
  *
  * A message that opens with the word while talking about the word is not that
  * instruction: "YOLO is the branch name" describes a string, and a linking
- * verb after it marks the sentence as prose rather than a request.
+ * verb after it marks the sentence as prose rather than a request. Conjunctions
+ * are deliberately absent from that list: "YOLO and ship the release" is an
+ * instruction, and refusing it would deny the owner his own switch.
  */
-const REVIEWER_OFF = /^\s*yolo\b(?!\s+(?:is|are|was|were|means?|stood|stands?|sounds?|looks?|just|only|refers?|as|and|or|but)\b)/iu
+const REVIEWER_OFF = /^\s*yolo\b(?!\s+(?:is|are|was|were|means?|stood|stands?|sounds?|looks?|just|only|refers?|as)\b)/iu
 
 /** One recorded reviewer-off message. */
 export interface ReviewerOff {
