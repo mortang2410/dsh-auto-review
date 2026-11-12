@@ -42,7 +42,7 @@ function sessionWithEvents(events: { type: string; data: unknown }[]): Session {
     // A typed message carries its source in a real session; the renderer reads
     // it to separate the owner from a scheduled or plugin prompt.
     const data = event.type === 'user/message' && (event.data as { source?: unknown }).source === undefined
-      ? { source: { kind: 'user' }, ...(event.data as object) }
+      ? { source: { kind: 'user', rpcId: 'rpc-test' }, ...(event.data as object) }
       : event.data
     append.call(session, event.type, data, surface.has(event.type) ? { surfaceOp: 'append' } : undefined)
   }

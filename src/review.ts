@@ -156,8 +156,12 @@ function contextLine(event: SessionEvent): string | undefined {
       // prompt and every other plugin declare their own source kind, and
       // labelling one of those `[user]` would hand the reviewer a line the
       // prompt tells it to treat as authority (see ./authorization.ts).
-      const kind = event.data.source?.kind
-      const who = kind === 'user' ? 'user' : `not-the-owner source=${String(kind ?? 'unknown')}`
+      // Same rule as ./authorization.ts: a bare `user` source may be a plugin's
+      // followup, so only the input path's request id marks the owner.
+      const source = event.data.source as { kind?: string; rpcId?: unknown } | undefined
+      const who = source?.kind === 'user' && typeof source.rpcId === 'string'
+        ? 'user'
+        : `not-the-owner source=${String(source?.kind ?? 'unknown')}`
       return `[${who}] ${truncate(contentText(event.data.content), CONTEXT_LINE_BUDGET)}`
     }
     case 'assistant/message': return `[agent] ${truncate(contentText(event.data.message.content), CONTEXT_LINE_BUDGET)}`
@@ -252,7 +256,8 @@ function ownerSection(events: readonly SessionEvent[], budget: ContextBudgetConf
       continue
     }
     if (event.type !== 'user/message') continue
-    if (event.data.source?.kind !== 'user') continue
+    const source = event.data.source as { kind?: string; rpcId?: unknown } | undefined
+    if (source?.kind !== 'user' || typeof source.rpcId !== 'string') continue
     // No character cap here: the window bounds the count, and an approval the
     // owner stated earlier in it must survive however much they said since.
     const line = `[user] ${truncate(contentText(event.data.content), CONTEXT_LINE_BUDGET)}`

@@ -11,11 +11,12 @@
  * counts as personal approval is a question about intent, and a phrase list
  * answers a question about vocabulary instead (see ./review.ts).
  *
- * Attribution is by message source. A `user/message` event counts only when
- * its source carries the `user` kind, the source the harness's own input path
- * stamps on typed input. Scheduled prompts declare `schedule`, and every other
- * plugin declares its own kind, so an agent-authored prompt never reads as the
- * owner's voice.
+ * Attribution is by message source. A `user/message` event counts only when it
+ * came through the harness's own input path, which stamps the `user` kind plus
+ * the prompt request id it was admitted under. Scheduled prompts declare
+ * `schedule`; a plugin that calls followup can pass the bare `user` kind
+ * (`dsh-client-auto-continue` does), and the missing request id is what keeps
+ * that continuation from reading as the owner's own words.
  *
  * The window is the open turn alone: the message that opens with YOLO is the
  * one the calls in flight answer, and carrying it into a later turn would
@@ -80,7 +81,12 @@ export function findReviewerOff(events: readonly SessionEvent[], delegationDepth
   let found: ReviewerOff | undefined
   for (const event of window.reverse()) {
     if (event.type !== 'user/message') continue
-    if (event.data.source?.kind !== 'user') continue
+    // The owner's typed input carries the prompt request id the interactive
+    // client stamped on it. A plugin that calls followup with a bare `user`
+    // source (dsh-client-auto-continue does exactly that) is indistinguishable
+    // from a typed message by kind alone, so the id is what separates them.
+    const source = event.data.source as { kind?: string; rpcId?: unknown } | undefined
+    if (source?.kind !== 'user' || typeof source.rpcId !== 'string') continue
     const text = textOf(event.data.content).trim()
     if (!REVIEWER_OFF.test(text)) continue
     const quote = text.length <= QUOTE_MAX_CHARS ? text : `${text.slice(0, QUOTE_MAX_CHARS)}…`

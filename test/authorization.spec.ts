@@ -35,7 +35,7 @@ function append(session: Session, type: string, data: unknown): void {
 }
 
 /** Append one typed user message. */
-function say(session: Session, text: string, source: unknown = { kind: 'user' }): void {
+function say(session: Session, text: string, source: unknown = { kind: 'user', rpcId: 'rpc-owner' }): void {
   append(session, 'user/message', {
     role: 'user',
     id: `msg-${Math.random().toString(36).slice(2)}`,
@@ -46,7 +46,7 @@ function say(session: Session, text: string, source: unknown = { kind: 'user' })
 
 /** The reviewer-off message the log holds, or undefined. */
 const off = (text: string): string | undefined => {
-  const events = [{ type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } }]
+  const events = [{ type: 'user/message', seq: 1, data: { source: { kind: 'user', rpcId: 'rpc-1' }, content: [{ type: 'text', text }] } }]
   return findReviewerOff(events as never)?.quote
 }
 
@@ -78,6 +78,16 @@ describe('findReviewerOff', () => {
     expect(off('yolks are yellow')).toBeUndefined()
   })
 
+  it('ignores a plugin followup that reuses the user kind', () => {
+    // dsh-client-auto-continue sends its continuation with source {kind:'user'}
+    // and no request id; a configured template starting with YOLO must not
+    // turn review off.
+    const events = [
+      { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } },
+    ]
+    expect(findReviewerOff(events as never)).toBeUndefined()
+  })
+
   it('ignores a message a plugin or the scheduler wrote', () => {
     const events = [
       { type: 'user/message', seq: 1, data: { source: { kind: 'schedule' }, content: [{ type: 'text', text: 'YOLO' }] } },
@@ -87,7 +97,7 @@ describe('findReviewerOff', () => {
 
   it('grants nothing in a delegated session, where the "user" is another agent', () => {
     const events = [
-      { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } },
+      { type: 'user/message', seq: 1, data: { source: { kind: 'user', rpcId: 'rpc-1' }, content: [{ type: 'text', text: 'YOLO' }] } },
     ]
     expect(findReviewerOff(events as never, 1)).toBeUndefined()
   })
@@ -95,7 +105,7 @@ describe('findReviewerOff', () => {
   it('covers the open turn only', () => {
     // A message in the turn being worked on is the request the calls answer.
     // Carrying it into a later turn would take unrelated work out of review.
-    const yolo = { type: 'user/message', seq: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } }
+    const yolo = { type: 'user/message', seq: 3, data: { source: { kind: 'user', rpcId: 'rpc-1' }, content: [{ type: 'text', text: 'YOLO' }] } }
     expect(findReviewerOff([{ type: 'turn/end', seq: 1 }, yolo] as never)?.quote).toBe('YOLO')
     expect(findReviewerOff([yolo, { type: 'turn/end', seq: 4 }, { type: 'turn/start', seq: 5 }] as never)).toBeUndefined()
   })
