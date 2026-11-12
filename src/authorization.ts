@@ -23,10 +23,11 @@
  * calls they asked for, and singling out one of them for a second opinion would
  * reproduce the bug this module exists to remove.
  *
- * Three readings keep that rule honest. A later message that refuses without
- * granting revokes an earlier grant ("make the PR" then "don't create the
- * PR"). A negated permission statement is never a grant ("you have no
- * permission to push it"), because it contains the same words in the opposite
+ * Three readings keep that rule honest. A later message that withdraws the
+ * authorized action revokes an earlier grant ("make the PR" then "don't create
+ * the PR"), while a refusal about something else ("don't worry about the tests")
+ * leaves it standing. A negated permission statement is never a grant ("you have
+ * no permission to push it"), because it contains the same words in the opposite
  * sense. And a bare "yes" counts only as a terse answer, not as part of a
  * statement about the code ("yes, the branch is main"), because the owner is
  * answering a question there, not authorizing work.
@@ -140,16 +141,63 @@ export function authorizationQuote(text: string): string | undefined {
   return undefined
 }
 
+/** Verbs that name work a grant can be about. */
+const WORK = /\b(?:make|create|open|push|merge|send|publish|deploy|post|upload|delete|remove|drop|kill|restart|run|execute|install|commit|reset|force|write|edit|move|copy|rename|chmod|fix|apply|update|revert|release|tag|close)\b/iu
+
+/** Words that point back at the action under discussion instead of naming a new one. */
+const ANAPHORA = /\b(?:it|them|those|these|that one|this one)\b/iu
+
 /**
- * Whether the owner's message withdraws or refuses something. A message that
- * grants nothing but states a refusal revokes any earlier grant in the window:
- * "make the PR" followed by "don't create the PR" is not still a grant.
- * @param text - one human message.
- * @returns true when the message refuses, postpones, or denies.
+ * Function words, refusal vocabulary, and bare affirmatives: what a clause has
+ * left after this filter names an object or an action.
  */
-export function statesRefusal(text: string): boolean {
+const FILLER = new Set<string>([
+  'a', 'an', 'the', 'and', 'or', 'but', 'if', 'then', 'so', 'to', 'of', 'for', 'on', 'in', 'at', 'by',
+  'from', 'with', 'about', 'as', 'i', 'you', 'we', 'me', 'my', 'your', 'our', 'us', 'it', 'its', 'this',
+  'that', 'these', 'those', 'them', 'there', 'here', 'please', 'just', 'now', 'yet', 'still', 'again',
+  'too', 'also', 'very', 'really', 'ok', 'okay', 'do', 'does', 'did', 'done', 'be', 'am', 'is', 'are',
+  'was', 'were', 'been', 'being', 'have', 'has', 'had', 'will', 'would', 'can', 'could', 'should', 'may',
+  'might', 'must', 'dont', "don't", 'don’t', 'not', 'no', 'nope', 'never', 'wait', 'hold', 'off', 'mind',
+  'cancel', 'abort', 'second', 'thought', 'sure',
+])
+
+/**
+ * The words a clause carries once filler and refusal vocabulary are removed.
+ * @param text - one clause.
+ * @returns the lowercased content words, in order.
+ */
+function contentWords(text: string): readonly string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9'\u2019\s-]/gu, ' ')
+    .split(/\s+/u)
+    .filter(word => word !== '' && !FILLER.has(word))
+}
+
+/**
+ * Whether the owner's message withdraws the action an earlier grant authorized.
+ *
+ * A refusal only revokes when it is about that action. A message that refuses
+ * something else — "don't worry about the tests", after "make the PR" — is an
+ * aside, and the grant still stands. A refusal revokes when it points back at
+ * the action ("don't push it"), names the action's own object ("don't create
+ * the PR"), names work of the same kind ("don't merge the PR"), or stands alone
+ * as a bare refusal ("no", "not yet", "wait").
+ * @param text - one later human message.
+ * @param grant - the granting clause it might withdraw.
+ * @returns true when the message withdraws that grant.
+ */
+export function revokesGrant(text: string, grant: string): boolean {
   if (LEADING_NO.test(text)) return true
-  return text.split(/[.!?\n]+/u).some(clause => REFUSAL.test(clause))
+  const granted = new Set(contentWords(grant))
+  return text.split(/[.!?\n]+/u).some(clause => {
+    if (!REFUSAL.test(clause)) return false
+    if (ANAPHORA.test(clause)) return true
+    if (WORK.test(clause)) return true
+    const words = contentWords(clause)
+    if (words.length <= 1) return true
+    return words.some(word => granted.has(word))
+  })
 }
 
 /** One recorded human authorization. */
@@ -175,6 +223,7 @@ export interface UserAuthorization {
 export function findUserAuthorization(events: readonly SessionEvent[], delegationDepth = 0): UserAuthorization | undefined {
   if (delegationDepth > 0) return undefined
   let closed = 0
+  const later: string[] = []
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index] as SessionEvent
     if (event.type === 'turn/end') {
@@ -186,10 +235,14 @@ export function findUserAuthorization(events: readonly SessionEvent[], delegatio
     if (event.data.source?.kind !== 'user') continue
     const text = textOf(event.data.content)
     const quote = authorizationQuote(text)
-    if (quote !== undefined) return { quote, seq: event.seq }
-    // A later refusal revokes an earlier grant: the owner changed their mind,
-    // and continuing past this message would settle on words they withdrew.
-    if (statesRefusal(text)) return undefined
+    if (quote !== undefined) {
+      // A later message that withdraws this action revokes it: the owner
+      // changed their mind, and continuing past it would settle on words they
+      // took back. A later message that refuses something else leaves it.
+      const withdrawn = later.some(message => revokesGrant(message, quote))
+      return withdrawn ? undefined : { quote, seq: event.seq }
+    }
+    later.push(text)
   }
   return undefined
 }

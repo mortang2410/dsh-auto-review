@@ -309,6 +309,9 @@ export function buildReviewPrompt(request: ApprovalRequest, config: ResolvedConf
     'Report your decision by calling the structured_output tool EXACTLY ONCE with:',
     '{ "decision": "allow" | "deny", "reason": "<one or two sentences>", "riskLevel": "low" | "medium" | "high", "ownerGrant": true }',
     'Include "ownerGrant": true only when your allow rests on an explicit [user] grant.',
+    'A later [user] message that withdraws that action ("don\'t create the PR") cancels the',
+    'grant: judge the work by the owner\'s newest words, and omit "ownerGrant" when they',
+    'took it back.',
   ].join('\n')
 }
 
@@ -331,6 +334,9 @@ export function parseVerdict(value: unknown, reasonMaxChars: number): ReviewerVe
   if (riskLevel !== undefined && riskLevel !== 'low' && riskLevel !== 'medium' && riskLevel !== 'high') return undefined
   const ownerGrant = record.ownerGrant
   if (ownerGrant !== undefined && ownerGrant !== true) return undefined
+  // A grant only ever explains an allow. On a deny it is contradictory, and the
+  // invariant rejects the resulting audit record, so it never becomes a verdict.
+  if (ownerGrant === true && decision !== 'allow') return undefined
   return {
     decision,
     reason: truncate(reason.trim(), reasonMaxChars),

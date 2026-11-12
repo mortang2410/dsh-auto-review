@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { CallId } from './call-id.ts'
-import { authorizationQuote, autoReviewsInOpenTurn, findUserAuthorization } from '../src/index.ts'
+import { authorizationQuote, autoReviewsInOpenTurn, findUserAuthorization, revokesGrant } from '../src/index.ts'
 import {
   dispatchAskedApproval,
   mountHarness,
@@ -124,6 +124,19 @@ describe('authorizationQuote', () => {
   })
 })
 
+describe('revokesGrant', () => {
+  it('withdraws the action the owner named, and only that action', () => {
+    // A refusal of the authorized action withdraws it.
+    expect(revokesGrant("don't create the PR", 'make the PR')).toBe(true)
+    expect(revokesGrant("don't push it", 'make the PR')).toBe(true)
+    expect(revokesGrant('no', 'make the PR')).toBe(true)
+    expect(revokesGrant('not yet', 'make the PR')).toBe(true)
+    // A refusal of something else is an aside: the grant still stands.
+    expect(revokesGrant("don't worry about the tests", 'make the PR')).toBe(false)
+    expect(revokesGrant('never mind the flaky tests', 'make the PR')).toBe(false)
+  })
+})
+
 describe('findUserAuthorization', () => {
   it('reads only the owner-worded messages, never a plugin injection', async () => {
     const harness = await mountHarness()
@@ -159,6 +172,27 @@ describe('findUserAuthorization', () => {
     append(harness.session, 'turn/start', { turn: 2 })
     say(harness.session, "don't create the PR")
     // The later message withdraws the grant; the older words do not survive it.
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
+  })
+
+  it('keeps an earlier grant when the owner later refuses something else', async () => {
+    const harness = await mountHarness()
+    append(harness.session, 'turn/start', { turn: 1 })
+    say(harness.session, 'make the PR')
+    append(harness.session, 'turn/end', { turn: 1 })
+    append(harness.session, 'turn/start', { turn: 2 })
+    say(harness.session, "don't worry about the tests, they are flaky")
+    // The aside is not a withdrawal: the grant still authorizes the PR work.
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toMatchObject({ quote: 'make the PR' })
+  })
+
+  it('revokes an earlier grant when the later refusal names the action', async () => {
+    const harness = await mountHarness()
+    append(harness.session, 'turn/start', { turn: 1 })
+    say(harness.session, 'make the PR')
+    append(harness.session, 'turn/end', { turn: 1 })
+    append(harness.session, 'turn/start', { turn: 2 })
+    say(harness.session, "don't push it")
     expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
   })
 })
@@ -279,6 +313,53 @@ describe('the answerer honours the owner', () => {
       riskLevel: 'high',
     })
     expect(verdict?.data.escalation).toBeUndefined()
+  })
+
+  it('keeps the grant when the owner only grumbles about something else', async () => {
+    const harness = await auditHarness(
+      { toolsPolicy: { overrides: { bash: 'ai' } } },
+      () => ({ verdict: { decision: 'deny', reason: 'no grant in the transcript' } }),
+    )
+    append(harness.session, 'turn/start', { turn: 1 })
+    say(harness.session, 'make the PR')
+    append(harness.session, 'turn/end', { turn: 1 })
+    append(harness.session, 'turn/start', { turn: 2 })
+    say(harness.session, "don't worry about the tests, they are flaky")
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      callId: CallId('call-1'),
+      reason: 'gh pr create',
+    }, rejected)
+    // The aside withdrew nothing, so the owner's grant still settles the call
+    // without a reviewer.
+    expect(outcome).toBe('allowed-once')
+    expect(harness.subagents.starts).toHaveLength(0)
+  })
+
+  it('turns a contradictory reviewer verdict into a schema failure', async () => {
+    // A deny cannot rest on a grant: the parser rejects the pair, so the
+    // invariant never sees an audit record it has to fail.
+    const contradictory = () => ({
+      verdict: {
+        decision: 'deny' as const,
+        reason: 'the owner refused',
+        riskLevel: 'high' as const,
+        ownerGrant: true as const,
+      },
+    })
+    const harness = await auditHarness({ toolsPolicy: { overrides: { bash: 'ai' } } }, contradictory)
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      reason: 'rm -rf /',
+    }, rejected)
+    expect(outcome).toBe('rejected')
+    const verdict = harness.session.snapshotEvents()
+      .filter(event => event.type === 'autoReview/verdict')
+      .at(-1)
+    expect(verdict?.data).toMatchObject({ fallback: 'schema', outcome: 'rejected' })
+    expect(verdict?.data.ownerGrant).toBeUndefined()
   })
 
   it('does not count a grant against the AI budget fold', async () => {

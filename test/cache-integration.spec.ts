@@ -8,9 +8,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { CallId } from './call-id.ts'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import { dispatchAskedApproval, mountHarness, type Harness } from './harness.ts'
+import { dispatchAskedApproval, makeAgent, mountHarness, type Harness } from './harness.ts'
 
 const next: () => Promise<ApprovalOutcome> = () => Promise.resolve('allowed-once')
 
@@ -174,5 +175,45 @@ describe('verdict cache integration', () => {
     expect(harness.subagents.starts).toHaveLength(1)
     expect(verdictData(harness)[1]).toMatchObject({ decision: 'allow', outcome: 'allowed-once' })
     expect(verdictData(harness)[1]).not.toHaveProperty('cached')
+  })
+
+  it('never replays a reviewer grant into another session on the same mount', async () => {
+    // The cache is keyed by tool + arguments and owned by the mount, so a
+    // grant verdict stored here would authorize a call in a session whose
+    // owner never spoke.
+    let starts = 0
+    const scripted = () => {
+      starts += 1
+      return starts === 1
+        ? { verdict: { decision: 'allow' as const, reason: 'the owner granted it', riskLevel: 'high' as const, ownerGrant: true as const } }
+        : { verdict: { decision: 'deny' as const, reason: 'this session has no grant' } }
+    }
+    const harness = await auditHarness({ toolsPolicy: { overrides: { bash: 'ai' } } }, scripted)
+    presentCall(harness, CallId('call-a1'), '{"command":"gh pr create"}')
+    expect(await review(harness, CallId('call-a1'))).toBe('allowed-once')
+    expect(verdictData(harness)[0]).toMatchObject({ decision: 'allow', ownerGrant: true, outcome: 'allowed-once' })
+    expect(verdictData(harness)[0]).not.toHaveProperty('cached')
+
+    // Session B repeats the very same call on the same mounted runtime.
+    const sessionB = harness.ctx.sessions.create(SessionId('harness-session-b'))
+    sessionB.append('turn/start', { turn: 1 })
+    const agentB = makeAgent(sessionB)
+    const callB = CallId('call-b1')
+    ;(sessionB.append as unknown as (type: string, data: unknown) => unknown)
+      .call(sessionB, 'tool/call', { turn: 1, step: 1, callId: callB, name: 'bash', arguments: '{"command":"gh pr create"}' })
+    const { outcome } = await dispatchAskedApproval(harness.ctx, sessionB, {
+      agent: agentB,
+      toolName: 'bash',
+      callId: callB,
+    }, next)
+    expect(outcome).toBe('rejected')
+    // B paid its own review: the grant did not travel with the fingerprint.
+    expect(harness.subagents.starts).toHaveLength(2)
+    const bVerdict = sessionB.snapshotEvents()
+      .filter(event => event.type === 'autoReview/verdict')
+      .at(-1)?.data as Record<string, unknown> | undefined
+    expect(bVerdict).toMatchObject({ decision: 'deny', outcome: 'rejected' })
+    expect(bVerdict).not.toHaveProperty('ownerGrant')
+    expect(bVerdict).not.toHaveProperty('cached')
   })
 })

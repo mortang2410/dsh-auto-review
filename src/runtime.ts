@@ -546,12 +546,15 @@ export class AutoReviewRuntime {
         cached = true
       } else {
         resolution = await runReview(this.ctx, this.config, request, this.reviewerSessions)
-        if (!isReviewFailure(resolution)) {
+        // A verdict resting on the owner's grant is evidence about THIS
+        // session's transcript, and the cache is shared by every session on
+        // this mount. Replaying it elsewhere would hand another session an
+        // authorization its owner never spoke, so it is never stored.
+        if (!isReviewFailure(resolution) && resolution.ownerGrant !== true) {
           this.cache.set(cacheKey, {
             decision: resolution.decision,
             reason: resolution.reason,
             ...resolution.riskLevel !== undefined ? { riskLevel: resolution.riskLevel } : {},
-            ...resolution.ownerGrant === true ? { ownerGrant: true as const } : {},
           }, started)
         }
       }

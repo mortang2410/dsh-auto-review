@@ -230,6 +230,12 @@ describe('verdict schema and parsing', () => {
     expect(parseVerdict({ decision: 'allow', reason: 'x' }, 100)?.ownerGrant).toBeUndefined()
   })
 
+  it('refuses a grant marker on a deny verdict', () => {
+    // A deny cannot rest on the owner's permission, and the record this would
+    // produce is one the invariant rejects.
+    expect(parseVerdict({ decision: 'deny', reason: 'refused', riskLevel: 'high', ownerGrant: true }, 100)).toBeUndefined()
+  })
+
   it('truncates the verdict reason to the configured budget', () => {
     expect(parseVerdict({ decision: 'deny', reason: 'r'.repeat(50) }, 10)?.reason).toBe('rrrrrrrrrr…')
   })
