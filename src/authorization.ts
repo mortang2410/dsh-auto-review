@@ -74,6 +74,7 @@ const EXPLICIT: readonly RegExp[] = [
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
   /\bapproved\b/iu,
+  /\bgive\s+(?:it|them|you)\b/iu,
   /\bgo\s+ahead\b/iu,
   /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,
@@ -142,6 +143,41 @@ function textOf(content: readonly ContentBlock[]): string {
     .join('\n')
 }
 
+/** One matched grant: its words, and the question a bare answer was answering. */
+interface GrantMatch {
+  /** The granting clause, trimmed and truncated for the audit log. */
+  readonly quote: string
+  /**
+   * For a bare affirmative, the agent's question it answered. The grant covers
+   * only calls that question named; an explicit grant names its own action.
+   */
+  readonly subject?: string
+}
+
+/**
+ * Match the owner's granting words in one message.
+ * @param text - one human message.
+ * @param question - the agent's nearest earlier message; `''` when the window
+ *   holds none, which disqualifies a bare affirmative. `undefined` means the
+ *   caller has no transcript at all (the standalone parser contract).
+ * @returns the match, or undefined.
+ */
+function matchGrant(text: string, question?: string): GrantMatch | undefined {
+  if (LEADING_NO.test(text)) return undefined
+  // Split on sentence and line ends, not commas: an imperative naming its
+  // object ("make the PR") is often prefixed by an aside ("after lunch, ").
+  for (const clause of text.split(/[.!?\n]+/u)) {
+    const trimmed = clause.trim()
+    if (trimmed === '' || REFUSAL.test(trimmed) || NEGATED.test(trimmed)) continue
+    const quote = trimmed.length <= QUOTE_MAX_CHARS ? trimmed : `${trimmed.slice(0, QUOTE_MAX_CHARS)}…`
+    if (EXPLICIT.some(pattern => pattern.test(trimmed))) return { quote }
+    if (!AFFIRMATIVES.some(pattern => pattern.test(trimmed)) || !isBareAnswer(trimmed)) continue
+    if (!answersDecision(question)) continue
+    return question === undefined ? { quote } : { quote, subject: question }
+  }
+  return undefined
+}
+
 /**
  * The owner's own words that grant permission, when the text carries one.
  * @param text - one human message.
@@ -150,27 +186,28 @@ function textOf(content: readonly ContentBlock[]): string {
  * @returns the granting clause, trimmed and truncated, or undefined.
  */
 export function authorizationQuote(text: string, question?: string): string | undefined {
-  if (LEADING_NO.test(text)) return undefined
-  // Split on sentence and line ends, not commas: an imperative naming its
-  // object ("make the PR") is often prefixed by an aside ("after lunch, ").
-  for (const clause of text.split(/[.!?\n]+/u)) {
-    const trimmed = clause.trim()
-    if (trimmed === '' || REFUSAL.test(trimmed) || NEGATED.test(trimmed)) continue
-    const explicit = EXPLICIT.some(pattern => pattern.test(trimmed))
-    const affirmative = AFFIRMATIVES.some(pattern => pattern.test(trimmed))
-      && isBareAnswer(trimmed)
-      && answersDecision(question)
-    if (!explicit && !affirmative) continue
-    return trimmed.length <= QUOTE_MAX_CHARS ? trimmed : `${trimmed.slice(0, QUOTE_MAX_CHARS)}…`
-  }
-  return undefined
+  return matchGrant(text, question)?.quote
 }
 
-/** Verbs that name work a grant can be about. */
-const WORK = /\b(?:make|create|open|push|merge|send|publish|deploy|post|upload|delete|remove|drop|kill|restart|run|execute|install|commit|reset|force|write|edit|move|copy|rename|chmod|fix|apply|update|revert|release|tag|close)\b/iu
+/**
+ * Work verbs grouped by the action they perform. A withdrawal has to name the
+ * same action as the grant: "don't create the PR" withdraws "make the PR",
+ * while "don't close the PR" is a different operation on the same object.
+ */
+const ACTION_CLASSES: readonly (readonly string[])[] = [
+  ['make', 'create', 'open', 'build', 'produce', 'generate', 'draft'],
+  ['push', 'merge', 'send', 'publish', 'deploy', 'upload', 'post', 'release', 'tag', 'share'],
+  ['delete', 'remove', 'drop', 'kill', 'close', 'destroy', 'discard'],
+  ['write', 'edit', 'update', 'fix', 'apply', 'patch', 'change', 'rewrite'],
+  ['run', 'execute', 'install', 'commit', 'reset', 'force', 'revert', 'restart', 'test'],
+]
 
-/** Words that point back at the action under discussion instead of naming a new one. */
-const ANAPHORA = /\b(?:it|them|those|these|that one|this one)\b/iu
+/** Words that point back at an earlier noun instead of naming one. */
+const ANAPHORS = new Set<string>(['it', 'them', 'those', 'these', 'that', 'this'])
+const PLURAL_ANAPHORS = new Set<string>(['them', 'those', 'these'])
+
+/** Words that start an object phrase or a new clause rather than name the object. */
+const PREPOSITION = new Set<string>(['of', 'for', 'about', 'on', 'in', 'at', 'to', 'with', 'from', 'by', 'and', 'or', 'but'])
 
 /**
  * Function words, refusal vocabulary, and bare affirmatives: what a clause has
@@ -199,31 +236,116 @@ function contentWords(text: string): readonly string[] {
     .filter(word => word !== '' && !FILLER.has(word))
 }
 
+/** The index of the action class a word belongs to, or -1. */
+function actionClass(word: string): number {
+  return ACTION_CLASSES.findIndex(group => group.includes(word))
+}
+
+/** Whether a word reads as a plural noun: "logs" is, "pr" and "address" are not. */
+function isPlural(word: string): boolean {
+  return word.endsWith('s') && !word.endsWith('ss')
+}
+
+/** A parsed action: what is done, and to what. */
+interface ParsedAction {
+  /** Index into {@link ACTION_CLASSES}. */
+  readonly classIndex: number
+  /** The object's head noun when the clause names one. */
+  readonly object?: string
+  /** The pronoun's number when the object is a pronoun instead of a noun. */
+  readonly anaphor?: 'singular' | 'plural'
+}
+
+/**
+ * Read the action a clause performs: its work verb, then the object it names
+ * or the pronoun standing in for it.
+ * @param clause - one sentence of a message.
+ * @returns the parsed action, or undefined when the clause names no work.
+ */
+function parseAction(clause: string): ParsedAction | undefined {
+  const words = clause
+    .toLowerCase()
+    .replace(/[^a-z0-9'\u2019\s-]/gu, ' ')
+    .split(/\s+/u)
+    .filter(word => word !== '')
+  const verbIndex = words.findIndex(word => actionClass(word) >= 0)
+  if (verbIndex < 0) return undefined
+  const tail = words.slice(verbIndex + 1)
+  const anaphorWord = tail.find(word => ANAPHORS.has(word))
+  const object = tail.find(word => !FILLER.has(word) && !PREPOSITION.has(word) && !ANAPHORS.has(word))
+  return {
+    classIndex: actionClass(words[verbIndex]!),
+    ...object === undefined ? {} : { object },
+    ...anaphorWord === undefined ? {} : { anaphor: PLURAL_ANAPHORS.has(anaphorWord) ? 'plural' : 'singular' },
+  }
+}
+
+/**
+ * Resolve a pronoun to the noun it points at, searching the owner's own words
+ * backwards. Number agreement is what keeps "them" on the logs the owner
+ * mentioned instead of the singular PR they later mentioned.
+ * @param history - earlier human messages, oldest first, the grant included.
+ * @param number - the pronoun's number.
+ * @returns the head noun, or undefined when nothing agrees.
+ */
+function resolveAntecedent(history: readonly string[], number: 'singular' | 'plural'): string | undefined {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const words = contentWords(history[index]!)
+    for (let wordIndex = words.length - 1; wordIndex >= 0; wordIndex -= 1) {
+      const word = words[wordIndex]!
+      if (actionClass(word) >= 0) continue
+      if ((number === 'plural') === isPlural(word)) return word
+    }
+  }
+  return undefined
+}
+
 /**
  * Whether the owner's message withdraws the action an earlier grant authorized.
  *
- * A refusal only revokes when it names work that is the granted action: the
- * same object ("don't create the PR"), or a pronoun pointing at it ("don't push
- * it"). A refusal of other work ("don't delete the logs", "don't run the
- * tests"), a worried aside ("don't worry about it"), and a leading "No" about
- * something else ("No, the tests are flaky") all leave the grant standing. A
- * message that carries nothing but a refusal ("no", "not yet", "wait") is the
- * owner stopping the work in flight, so it does revoke.
+ * A refusal only revokes when it names the same operation: the same action class
+ * and the same object ("don't create the PR"), or a pronoun that resolves to the
+ * grant's object ("don't push it"). A refusal of other work ("don't delete the
+ * logs", "don't run the tests"), a refusal of the same object through another
+ * action ("don't close the PR"), a worried aside ("don't worry about it"), and a
+ * leading "No" about something else ("No, the tests are flaky") all leave the
+ * grant standing. A message that carries nothing but a refusal ("no", "not yet")
+ * is the owner stopping the work in flight, so it does revoke.
  * @param text - one later human message.
  * @param grant - the granting clause it might withdraw.
+ * @param history - the owner's earlier messages in the window, oldest first,
+ *   the granting message included; pronouns resolve against it.
  * @returns true when the message withdraws that grant.
  */
-export function revokesGrant(text: string, grant: string): boolean {
-  const granted = new Set(contentWords(grant))
+export function revokesGrant(text: string, grant: string, history: readonly string[] = [grant]): boolean {
   if (contentWords(text).length === 0 && (LEADING_NO.test(text) || REFUSAL.test(text))) return true
+  const granted = parseAction(grant)
+  if (granted === undefined) return false
   return text.split(/[.!?\n]+/u).some(clause => {
     if (!REFUSAL.test(clause) && !LEADING_NO.test(clause)) return false
-    // The withdrawal has to name work — a worried aside does not — and that
-    // work has to be the granted action, not some other task in the session.
-    if (!WORK.test(clause)) return false
-    if (ANAPHORA.test(clause)) return true
-    return contentWords(clause).some(word => granted.has(word))
+    const refusal = parseAction(clause)
+    if (refusal === undefined) return false
+    if (refusal.anaphor !== undefined) {
+      return resolveAntecedent(history, refusal.anaphor) === granted.object
+    }
+    if (refusal.object === undefined || granted.object === undefined) return false
+    return refusal.classIndex === granted.classIndex && refusal.object === granted.object
   })
+}
+
+/**
+ * Whether a bare answer's grant covers the pending call: the question that was
+ * answered has to name something this call is about. "May I delete the logs
+ * now?" answers for a call that mentions logs, not for `gh pr create`.
+ * @param subject - the agent's question the owner answered.
+ * @param requestText - the pending tool name, reason, and arguments.
+ * @returns true when the question names part of the request.
+ */
+export function grantCoversRequest(subject: string, requestText: string): boolean {
+  const requestWords = new Set(contentWords(requestText).map(word => isPlural(word) ? word.slice(0, -1) : word))
+  return contentWords(subject)
+    .map(word => isPlural(word) ? word.slice(0, -1) : word)
+    .some(word => word.length >= 3 && requestWords.has(word))
 }
 
 /** One recorded human authorization. */
@@ -232,6 +354,8 @@ export interface UserAuthorization {
   readonly quote: string
   /** Seq of the message that carried them. */
   readonly seq: number
+  /** The question a bare affirmative answered; the grant is scoped to it. */
+  readonly subject?: string
 }
 
 /**
@@ -261,8 +385,12 @@ export function findUserAuthorization(events: readonly SessionEvent[], delegatio
     window.push(event)
   }
   window.reverse()
-  let question: string | undefined
+  // No agent message yet reads as the empty question: a bare affirmative with
+  // nothing to answer grants nothing.
+  let question = ''
   let granted: UserAuthorization | undefined
+  let spoken: string[] = []
+  let atGrant: string[] = []
   let later: string[] = []
   for (const event of window) {
     if (event.type === 'assistant/message') {
@@ -272,9 +400,11 @@ export function findUserAuthorization(events: readonly SessionEvent[], delegatio
     if (event.type !== 'user/message') continue
     if (event.data.source?.kind !== 'user') continue
     const text = textOf(event.data.content)
-    const quote = authorizationQuote(text, question)
-    if (quote !== undefined) {
-      granted = { quote, seq: event.seq }
+    spoken.push(text)
+    const match = matchGrant(text, question)
+    if (match !== undefined) {
+      granted = { quote: match.quote, seq: event.seq, ...match.subject === undefined ? {} : { subject: match.subject } }
+      atGrant = [...spoken]
       later = []
       continue
     }
@@ -284,6 +414,6 @@ export function findUserAuthorization(events: readonly SessionEvent[], delegatio
   // A later message that withdraws this action revokes it: the owner changed
   // their mind, and continuing past it would settle on words they took back. A
   // later message that refuses something else leaves the grant standing.
-  const withdrawn = later.some(message => revokesGrant(message, granted.quote))
+  const withdrawn = later.some((message, index) => revokesGrant(message, granted!.quote, [...atGrant, ...later.slice(0, index)]))
   return withdrawn ? undefined : granted
 }

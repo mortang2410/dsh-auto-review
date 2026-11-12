@@ -57,7 +57,7 @@ import {
   type StateAppend,
   type VerdictAppend,
 } from './events.ts'
-import { findUserAuthorization } from './authorization.ts'
+import { findUserAuthorization, grantCoversRequest } from './authorization.ts'
 import { isReviewFailure, newCircuitId, newRejectionId, newVerdictId, runReview, sanitizedArgumentsText, truncate } from './review.ts'
 import type { ReviewFailure, ReviewResolution } from './review.ts'
 
@@ -391,7 +391,12 @@ export class AutoReviewRuntime {
     // uncorrelatable request falls through to the reviewer path, which fails
     // closed like every other uncorrelatable request.
     const grant = approvalId === undefined ? undefined : this.grantFor(session, memory, request.toolName)
-    if (grant !== undefined && approvalId !== undefined) return this.settleGrant(request, approvalId, grant)
+    // A bare answer's grant only covers the action it answered for; anything
+    // else goes to the reviewer, which sees the whole exchange.
+    if (grant !== undefined && approvalId !== undefined
+      && (grant.subject === undefined || grantCoversRequest(grant.subject, this.requestText(session, request)))) {
+      return this.settleGrant(request, approvalId, grant.quote)
+    }
     // Separate budgets: real AI verdicts vs reviewer failures. A broken
     // reviewer burns the failure budget (then delegates) without eating the
     // AI-decision budget, and vice versa.
@@ -421,11 +426,20 @@ export class AutoReviewRuntime {
    * @param toolName - the tool the pending request is about.
    * @returns the granting words, or undefined when the human has not granted.
    */
-  private grantFor(session: Session, memory: SessionMemory, toolName: string): string | undefined {
+  private grantFor(session: Session, memory: SessionMemory, toolName: string): { quote: string; subject?: string } | undefined {
     const authorization = findUserAuthorization(sessionEvents(session), session.header.delegationDepth ?? 0)
-    if (authorization !== undefined) return authorization.quote
+    if (authorization !== undefined) return authorization
     const overrideId = this.activeOverrideFor(session, memory, toolName, Date.now())
-    return overrideId === undefined ? undefined : `one-shot override ${String(overrideId)}`
+    return overrideId === undefined ? undefined : { quote: `one-shot override ${String(overrideId)}` }
+  }
+
+  /**
+   * The text a scoped grant is matched against: the tool, the calling agent's
+   * stated reason, and the arguments the log recorded presenting.
+   */
+  private requestText(session: Session, request: ApprovalRequest): string {
+    const raw = request.callId === undefined ? undefined : findPresentedCall(sessionEvents(session), request.callId)
+    return `${request.toolName} ${request.reason ?? ''} ${raw ?? ''}`
   }
 
   /**

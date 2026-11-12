@@ -134,6 +134,13 @@ describe('revokesGrant', () => {
     expect(revokesGrant('not yet', 'make the PR')).toBe(true)
   })
 
+  it('does not withdraw the same object through a different action', () => {
+    // Closing a PR is not making one, even though both name it.
+    expect(revokesGrant("don't close the PR", 'make the PR')).toBe(false)
+    // "them" resolves to the logs the owner mentioned, not to the singular PR.
+    expect(revokesGrant("don't delete them", 'make the PR', ['The logs are noisy. Keep them for audit.', 'make the PR'])).toBe(false)
+  })
+
   it('leaves the grant standing when the refusal is about something else', () => {
     // Other work, other objects, worried asides, and an unrelated leading "No"
     // are not withdrawals of what the owner authorized.
@@ -182,6 +189,12 @@ describe('findUserAuthorization', () => {
     append(harness.session, 'turn/start', { turn: 2 })
     say(harness.session, "don't create the PR")
     // The later message withdraws the grant; the older words do not survive it.
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
+  })
+
+  it('grants nothing for a bare yes with no question to answer', async () => {
+    const harness = await mountHarness()
+    say(harness.session, 'yes')
     expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
   })
 
@@ -392,6 +405,46 @@ describe('the answerer honours the owner', () => {
       .at(-1)
     expect(verdict?.data).toMatchObject({ fallback: 'schema', outcome: 'rejected' })
     expect(verdict?.data.ownerGrant).toBeUndefined()
+  })
+
+  it('does not spend an answer on a different action', async () => {
+    // The owner said yes to deleting logs; that is no permission for a PR.
+    const harness = await auditHarness(
+      { toolsPolicy: { overrides: { bash: 'ai' } } },
+      () => ({ verdict: { decision: 'deny', reason: 'no grant for this call' } }),
+    )
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'May I delete the logs now?' }] },
+    })
+    say(harness.session, 'yes')
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      callId: CallId('call-1'),
+      reason: 'gh pr create',
+    }, rejected)
+    expect(outcome).toBe('rejected')
+    expect(harness.subagents.starts).toHaveLength(1)
+  })
+
+  it('spends a bare answer on the action it answered for', async () => {
+    const harness = await auditHarness({ toolsPolicy: { overrides: { bash: 'ai' } } })
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'May I push the branch now?' }] },
+    })
+    say(harness.session, 'yes')
+    const { outcome } = await dispatchAskedApproval(harness.ctx, harness.session, {
+      agent: harness.agent,
+      toolName: 'bash',
+      callId: CallId('call-2'),
+      reason: 'git push origin main',
+    }, rejected)
+    expect(outcome).toBe('allowed-once')
+    expect(harness.subagents.starts).toHaveLength(0)
   })
 
   it('does not count a grant against the AI budget fold', async () => {
