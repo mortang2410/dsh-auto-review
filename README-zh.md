@@ -389,7 +389,7 @@ Claude Desktop（`claude_desktop_config.json`）配置示例：
 - `reviewerTools` 中的名称必须是 profile 中已存在的全局工具；未知名称会使审查器子代理在最早点大声失败并回退。
 - 风险规则按各自的 `field` 匹配请求的 `reason`、`toolName` 或脱敏后的调用 `arguments`；其他条件应放入 `toolsPolicy.overrides`。
 - `/auto-review approve` 覆盖授权的是对同一工具的下一次请求，而不是那次确切的历史调用；同一工具上的不同操作也会消耗它。
-- 关闭审查只从你自己的消息中读取（来源为 `user` 的 `user/message` 事件），窗口是本回合；计划任务与其它插件的消息不会被当成你的声音，被委派的子会话也不关闭审查。`YOLO` 必须出现在消息开头："ok YOLO" 或 "yolo 分支" 不生效。
+- 关闭审查只从你自己的消息中读取：来源同时带有 `user` 类型和交互客户端在你输入时盖上的请求标识（`rpcId`）的 `user/message` 事件，窗口是本回合；只带 `user` 类型、没有请求标识的插件消息（例如 `dsh-client-auto-continue` 的续写文本）不会被当成你的声音，计划任务同样不会，被委派的子会话也不关闭审查。`YOLO` 必须出现在消息开头："ok YOLO" 或 "yolo 分支" 不生效。无交互客户端的提示（headless、ACP）不带请求标识，因此其中的 `YOLO` 不起作用，只有 `/auto-review off` 能关闭审查。
 - 授权短语表只覆盖英文：显式许可、"yes" 类肯定回答，以及带宾语的动作祈使句。其他语言或不常见的说法交给审查器，提示词里写着同一规则——你已授权的就放行，并标记为 `ownerGrant`，从而不会被风险上限推翻。否定句（"you have no permission to push it"）不构成授权；陈述句里的 "yes"（"yes, the branch is main"）是在回答事实问题，不授权任何操作；窗口内随后仅表达拒绝的消息会撤销先前的授权。
 - 裁决事件是仅日志的；Web 审查面板读取折叠后的 `autoReview` 投影（原始事件流绝不会到达浏览器插件）。
 - `autoReview/state` 与 `autoReview/verdict` 在支持标记的宿主上以信封 `ignorable: true` 追加，任何 harness 构建都能加载日志 —— 不认识这些仓库外类型的读取方直接跳过这些记录。已发布的 rc 宿主（rc.1–rc.8）上运行时会检测到标记被丢弃并完全不写这些事件（内存镜像继续提供命令、预算、熔断器与 `approve`）；pre-0.5.1 版本污染的会话可用 `dsh-permission-rules` 的 `scripts/repair-session-logs.mjs` 修复（其默认目标集已覆盖全部五种 `autoReview/*` 事件）。
