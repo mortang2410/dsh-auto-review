@@ -68,7 +68,7 @@ Cuando una acción cruza el límite del sandbox, un segundo modelo lee la eviden
 6. **Rastro de auditoría completo** — eventos de sesión solo-registro `autoReview/verdict` + `autoReview/rejection` (sobre `ignorable: true`) más un compañero invariant opcional que impone marcador ⟺ evento.
 7. **Controles de seguridad** — un disyuntor de rechazos (3 denegaciones consecutivas, o 6 de los últimos 10 veredictos, por turno), una política por nivel de riesgo, una anulación de un solo uso `/auto-review approve`, y una desactivación dura de política `never` que se explica a sí misma al modelo.
 8. **Contexto opcional del revisor** — una transcripción compacta acotada (`contextBudget`) más una política de decisión en Markdown estilo Codex (`reviewerPolicyText`).
-9. **Tu permiso decide** — cuando autorizas en tu propio mensaje ("sí", "adelante", "haz el PR"), la llamada pendiente se concede antes de cualquier revisor: no se ejecuta el revisor, no se gasta presupuesto de IA y el límite de riesgo no la rebaja. `/auto-review approve` sigue el mismo camino.
+9. **YOLO detiene al revisor** — un mensaje que empieza por `YOLO` (sin distinguir mayúsculas) resuelve la llamada pendiente sin revisor: no se ejecuta el revisor, no se gasta presupuesto de IA y el límite de riesgo no la rebaja. Todo lo demás lo decide el revisor: lee tus propias palabras, juzga si aprobaste personalmente este trabajo y tiene instrucción de no rechazar nunca esa aprobación. `/auto-review approve` hace lo mismo con una sola llamada.
 
 Cada decisión se reconstruye desde el registro de sesión: `approval/asked` → `autoReview/verdict` (o `autoReview/rejection`) → `approval/decided`.
 

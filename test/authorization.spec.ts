@@ -92,18 +92,19 @@ describe('findReviewerOff', () => {
     expect(findReviewerOff(events as never, 1)).toBeUndefined()
   })
 
-  it('stops at the turn window', () => {
-    const turn = (n: number) => [{ type: 'turn/end', seq: n * 10 }]
-    const old = [
-      { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } },
-      ...turn(1), ...turn(2), ...turn(3),
-    ]
-    expect(findReviewerOff(old as never)).toBeUndefined()
-    const recent = [
-      ...turn(1), ...turn(2),
-      { type: 'user/message', seq: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } },
-    ]
-    expect(findReviewerOff(recent as never)?.quote).toBe('YOLO')
+  it('covers the open turn only', () => {
+    // A message in the turn being worked on is the request the calls answer.
+    // Carrying it into a later turn would take unrelated work out of review.
+    const yolo = { type: 'user/message', seq: 3, data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'YOLO' }] } }
+    expect(findReviewerOff([{ type: 'turn/end', seq: 1 }, yolo] as never)?.quote).toBe('YOLO')
+    expect(findReviewerOff([yolo, { type: 'turn/end', seq: 4 }, { type: 'turn/start', seq: 5 }] as never)).toBeUndefined()
+  })
+
+  it('does not treat prose about the word as the switch', () => {
+    expect(off('YOLO is the branch name, not permission to bypass review.')).toBeUndefined()
+    expect(off('YOLO means you only live once')).toBeUndefined()
+    expect(off('YOLO and the tests are green')).toBeUndefined()
+    expect(off('YOLO fix the flaky test')).toBe('YOLO fix the flaky test')
   })
 })
 

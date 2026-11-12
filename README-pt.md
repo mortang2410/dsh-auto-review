@@ -68,7 +68,7 @@ O `dsh-auto-review` coloca um segundo modelo na cadeia de answerers de `approval
 6. **Trilha de auditoria completa** — eventos de sessão somente-log `autoReview/verdict` + `autoReview/rejection` (envelope `ignorable: true`) mais um companheiro invariant opcional que impõe marcador ⟺ evento.
 7. **Controles de segurança** — um disjuntor de rejeições (3 negações consecutivas, ou 6 dos últimos 10 vereditos, por turno), uma política por nível de risco, uma anulação de uso único `/auto-review approve` e uma desativação dura de política `never` que se explica ao modelo.
 8. **Contexto opcional do revisor** — uma transcrição compacta limitada (`contextBudget`) mais uma política de decisão em Markdown estilo Codex (`reviewerPolicyText`).
-9. **Sua permissão decide** — quando você autoriza na sua própria mensagem ("sim", "pode ir", "faça o PR"), a chamada pendente é concedida antes de qualquer revisor: o revisor não roda, o orçamento de IA não é gasto e o limite de risco não a rebaixa. `/auto-review approve` segue o mesmo caminho.
+9. **YOLO desliga o revisor** — uma mensagem que começa com `YOLO` (sem diferenciar maiúsculas) resolve a chamada pendente sem revisor: o revisor não roda, o orçamento de IA não é gasto e o limite de risco não a rebaixa. Todo o resto é julgamento do revisor: ele lê as suas palavras, decide se você aprovou pessoalmente este trabalho e é instruído a nunca recusar essa aprovação. `/auto-review approve` faz o mesmo para uma chamada.
 
 Cada decisão se reconstrói a partir do log da sessão: `approval/asked` → `autoReview/verdict` (ou `autoReview/rejection`) → `approval/decided`.
 

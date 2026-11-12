@@ -68,7 +68,7 @@ DeepSeek Harness 的第二模型 AI 审批 —— 一个只读审查子代理在
 6. **完整审计追踪** —— 仅日志的 `autoReview/verdict` + `autoReview/rejection` 会话事件（信封 `ignorable: true`），外加一个可选的 invariant 配套插件来强制「标记 ⟺ 事件」。
 7. **安全旋钮** —— 拒绝熔断器（每轮 3 次连续拒绝，或最近 10 次裁决中 6 次拒绝）、风险等级策略、一次性 `/auto-review approve` 覆盖，以及会向模型自我解释的 `never` 策略硬禁用。
 8. **可选审查上下文** —— 有界紧凑记录（`contextBudget`）加 Codex 风格 Markdown 裁决策略（`reviewerPolicyText`）。
-9. **你自己的许可就是决定** —— 当你在自己的消息里明确授权（"yes"、"go ahead"、"make the PR"），待处理的调用在任何审查之前直接放行：不运行审查器、不消耗 AI 预算，也不受风险上限压制。`/auto-review approve` 走同一条路。
+9. **YOLO 让审查器停下** —— 以 `YOLO` 开头的消息（不区分大小写）让待处理的调用跳过审查：不运行审查器、不消耗 AI 预算，也不受风险上限压制。其余情况交给审查器：它读你自己的话，判断你是否亲自批准了这项工作，并被告知无论措辞如何都不要拒绝这份批准。`/auto-review approve` 对单个调用做同样的事。
 
 每一次决策都能从会话日志重建：`approval/asked` → `autoReview/verdict`（或 `autoReview/rejection`）→ `approval/decided`。
 
@@ -245,7 +245,7 @@ dsh --profile web --dump-config | grep -A4 'id: auto-review'
 
 审查器是为"没有人回答"的那一刻存在的，它不能压过正在回答的人。因此回答者会在启动审查器之前，先读会话日志里你的授权：
 
-- **什么算授权** —— 明确的许可（"you have my permission"、"I approve"）、肯定回答（"yes"、"go ahead"、"ship it"），或带宾语的动作祈使句（"make the PR"、"push it"、"delete them"）。描述（"the login page is broken"）和拒绝（"not yet"、"don't"）都不算，同一句里的拒绝也不会取消另一句里的授权。
+- **什么算授权** —— 这里没有词表：审查器读到你的 `[user]` 行，自行判断你是否亲自批准了这项工作，措辞、语气、拼写都不影响，也不会因为批准不正式而拒绝。落在批准上的裁定标记 `ownerGrant`，从而越过风险上限。
 - **在哪个范围** —— 当前回合与上一回合，也就是"刚才说过"的授权所在的位置。授权以回合为单位生效：你要的东西，执行它的那些调用都属于你要的范围。
 - **谁说的** —— 只认你自己输入的消息。计划任务有自己的来源类型，不会被当成你的声音；被委派的子会话也不授予任何权限，因为它的 "user" 消息是父代理的提示。
 - **它结算什么** —— `allowed-once`：不运行审查器、不消耗 AI 预算、不受风险上限压制。审计事件记录你的原话（`humanAuthorized`），所以这个决定和其他决定一样能从日志重建。`never` 策略仍然优先 —— 那是管理员的硬禁用，不是审查器的意见。
@@ -389,7 +389,7 @@ Claude Desktop（`claude_desktop_config.json`）配置示例：
 - `reviewerTools` 中的名称必须是 profile 中已存在的全局工具；未知名称会使审查器子代理在最早点大声失败并回退。
 - 风险规则按各自的 `field` 匹配请求的 `reason`、`toolName` 或脱敏后的调用 `arguments`；其他条件应放入 `toolsPolicy.overrides`。
 - `/auto-review approve` 覆盖授权的是对同一工具的下一次请求，而不是那次确切的历史调用；同一工具上的不同操作也会消耗它。
-- 授权只从你自己的消息中读取（来源为 `user` 的 `user/message` 事件），窗口是本回合与上一回合，且以回合为单位生效：一旦你说过 "make the PR"，执行它的那些调用都放行，而不只放行其中一个。计划任务与其他插件注入的文本不会被当作你的声音；被委派的子会话也不授予任何权限，因为它的 "user" 消息是父代理的提示。一处已知限制：`dsh-client-auto-continue` 的续跑文本同样以 `user` 来源投递，所以如果把续跑模板配置成含许可短语（"go ahead"），该窗口内后续调用都会被放行；其默认模板不会如此。
+- 关闭审查只从你自己的消息中读取（来源为 `user` 的 `user/message` 事件），窗口是本回合；计划任务与其它插件的消息不会被当成你的声音，被委派的子会话也不关闭审查。`YOLO` 必须出现在消息开头："ok YOLO" 或 "yolo 分支" 不生效。
 - 授权短语表只覆盖英文：显式许可、"yes" 类肯定回答，以及带宾语的动作祈使句。其他语言或不常见的说法交给审查器，提示词里写着同一规则——你已授权的就放行，并标记为 `ownerGrant`，从而不会被风险上限推翻。否定句（"you have no permission to push it"）不构成授权；陈述句里的 "yes"（"yes, the branch is main"）是在回答事实问题，不授权任何操作；窗口内随后仅表达拒绝的消息会撤销先前的授权。
 - 裁决事件是仅日志的；Web 审查面板读取折叠后的 `autoReview` 投影（原始事件流绝不会到达浏览器插件）。
 - `autoReview/state` 与 `autoReview/verdict` 在支持标记的宿主上以信封 `ignorable: true` 追加，任何 harness 构建都能加载日志 —— 不认识这些仓库外类型的读取方直接跳过这些记录。已发布的 rc 宿主（rc.1–rc.8）上运行时会检测到标记被丢弃并完全不写这些事件（内存镜像继续提供命令、预算、熔断器与 `approve`）；pre-0.5.1 版本污染的会话可用 `dsh-permission-rules` 的 `scripts/repair-session-logs.mjs` 修复（其默认目标集已覆盖全部五种 `autoReview/*` 事件）。

@@ -17,16 +17,14 @@
  * plugin declares its own kind, so an agent-authored prompt never reads as the
  * owner's voice.
  *
- * The window is the open turn plus the turn before it, the same span the
- * reviewer's own transcript window documents.
+ * The window is the open turn alone: the message that opens with YOLO is the
+ * one the calls in flight answer, and carrying it into a later turn would
+ * authorise work it never mentioned.
  * @module dsh-auto-review/authorization
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-
-/** How many turns back a reviewer-off message is still read. */
-export const REVIEWER_OFF_TURNS = 2
 
 /** How much of the owner's message the audit record keeps. */
 const QUOTE_MAX_CHARS = 200
@@ -35,8 +33,12 @@ const QUOTE_MAX_CHARS = 200
  * The one phrasing this module still matches itself: a message that opens with
  * YOLO, which the owner uses to mean "do not review this". Case does not
  * matter, and leading whitespace is ignored because a pasted prompt carries it.
+ *
+ * A message that opens with the word while talking about the word is not that
+ * instruction: "YOLO is the branch name" describes a string, and a linking
+ * verb after it marks the sentence as prose rather than a request.
  */
-const REVIEWER_OFF = /^\s*yolo\b/iu
+const REVIEWER_OFF = /^\s*yolo\b(?!\s+(?:is|are|was|were|means?|stood|stands?|sounds?|looks?|just|only|refers?|as|and|or|but)\b)/iu
 
 /** One recorded reviewer-off message. */
 export interface ReviewerOff {
@@ -68,13 +70,9 @@ function textOf(content: readonly ContentBlock[]): string {
 export function findReviewerOff(events: readonly SessionEvent[], delegationDepth = 0): ReviewerOff | undefined {
   if (delegationDepth > 0) return undefined
   const window: SessionEvent[] = []
-  let closed = 0
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index] as SessionEvent
-    if (event.type === 'turn/end') {
-      closed += 1
-      if (closed >= REVIEWER_OFF_TURNS) break
-    }
+    if (event.type === 'turn/end') break
     window.push(event)
   }
   let found: ReviewerOff | undefined
