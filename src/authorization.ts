@@ -60,10 +60,13 @@ const LEADING_NO = /^\s*no\b/iu
 const NEGATED = /\b(?:no|not|never|without)\b[^.!?\n]{0,24}\b(?:permission|approval|consent|authori[sz](?:ation|ed|e)|approved|allowed)\b/iu
 
 /**
- * The grant forms that are a deliberate statement about the work in flight: an
- * explicit permission phrase, or an imperative that names the object it acts
- * on. A description of a problem ("the login page is broken") matches none of
- * them, so it authorizes nothing.
+ * The grant forms that address the agent directly: a permission phrase, or an
+ * imperative that names the object it acts on. A description of a problem ("the
+ * login page is broken") matches none of them, so it authorizes nothing.
+ *
+ * These may sit anywhere in a clause because each one carries an addressee of
+ * its own — "you", "my", or a verb in the imperative — so its presence is the
+ * act. The assent words below do not, which is why they are separated.
  */
 const EXPLICIT: readonly RegExp[] = [
   // "I give you permission", "you have my approval", "permission granted".
@@ -73,18 +76,53 @@ const EXPLICIT: readonly RegExp[] = [
   // "you're authorized", "I'm authorized", "I authorize it", "I approve".
   /\b(?:you(?:'re| are)|i(?:'m| am))\s+(?:fully\s+)?(?:authori[sz]ed|approved)\b/iu,
   /\bi\s+(?:hereby\s+)?(?:authori[sz]e|approve)\b/iu,
-  /\bapproved\b/iu,
-  /\byes\b(?:(?!\bi['’](?:ll|m)\b|\bi will\b|\bi am\b)[^.!?\n]){0,40}\bgive\s+(?:it|them|you)\b(?!\s+(?:a|another)\s+(?:try|shot))/iu,
-  /\bgo\s+ahead\b/iu,
-  /\bgo\s+for\s+it\b/iu,
   /\bgreen\s?light\b/iu,
-  /\bproceed\b/iu,
-  /\bdo\s+(?:it|that|this)\b/iu,
-  /\bship\s+it\b/iu,
   /\bfull\s+speed\b/iu,
   // An imperative that names its object: "make the PR", "push it", "delete them".
   /\b(?:make|create|open|push|merge|send|publish|deploy|post|upload|delete|remove|drop|kill|restart|run|execute|install|commit|reset|force|write|edit|move|copy|rename|chmod|fix|apply|update|revert)\s+(?:the|a|an|this|that|these|those|it|its|it'?s|them|all|my|your)\b/iu,
 ]
+
+/**
+ * Assent words: the owner's go-ahead in its shortest form.
+ *
+ * Each of these is also an ordinary English word, so its presence is not the
+ * act of permitting: "the approved build is on main", "I will do it tomorrow",
+ * "the tests will proceed automatically", "legal approved the change" all
+ * mention assent while granting nothing. One counts only when the clause reads
+ * as the owner speaking to the agent — terse, with no statement of fact and no
+ * third-party subject in front of it — or when the phrase itself opens the
+ * clause ("go ahead and push the branch").
+ */
+const ASSENT: readonly RegExp[] = [
+  // "approved" as a one-word answer, never "pre-approved", "unapproved", or
+  // "approved the change" where something else did the approving.
+  /(?<![\w-])approved\b(?!\s+(?:it|them|him|her|us|the|this|that|these|those|a|an|by|for|in|on)\b)/iu,
+  /\byes\b(?:(?!\bi['’](?:ll|m)\b|\bi will\b|\bi am\b)[^.!?\n]){0,40}\bgive\s+(?:it|them|you)\b(?!\s+(?:a|another)\s+(?:try|shot))/iu,
+  /\bgo\s+ahead\b/iu,
+  /\bgo\s+for\s+it\b/iu,
+  /\bproceed\b/iu,
+  /\bdo\s+(?:it|that|this)\b/iu,
+  /\bship\s+it\b/iu,
+]
+
+/**
+ * A clause that opens with anything but the owner addressing the agent: a
+ * third party ("the team approved", "we ship it on fridays"), a thing ("the tests
+ * proceed"), or a determiner. An assent word after one of these describes the world instead of
+ * answering the agent.
+ */
+const NOT_ADDRESSED = /^(?:he|she|it|they|we|one|someone|somebody|nobody|everyone|everything|the|a|an|this|that|these|those|my|our|his|her|their|its|there)\b/iu
+
+/** Whether an assent word in this clause is the owner speaking, not a mention. */
+function isAssent(clause: string): boolean {
+  if (NOT_ADDRESSED.test(clause)) return false
+  const match = ASSENT.map(pattern => pattern.exec(clause)).find(found => found !== null)
+  if (match === undefined) return false
+  if (isBareAnswer(clause)) return true
+  // A phrase that opens the clause addresses the agent however long the clause
+  // runs: "go ahead and push the branch once the tests pass".
+  return match.index === clause.search(/\S/u) && !DECLARATIVE.test(clause)
+}
 
 /**
  * Bare affirmative answers ("yes", "sure"). Unlike the explicit forms these
@@ -175,6 +213,7 @@ function matchGrant(text: string, question?: string): GrantMatch | undefined {
     if (trimmed === '' || REFUSAL.test(trimmed) || NEGATED.test(trimmed)) continue
     const quote = trimmed.length <= QUOTE_MAX_CHARS ? trimmed : `${trimmed.slice(0, QUOTE_MAX_CHARS)}…`
     if (EXPLICIT.some(pattern => pattern.test(trimmed))) return { quote }
+    if (isAssent(trimmed)) return { quote }
     if (!AFFIRMATIVES.some(pattern => pattern.test(trimmed)) || !isBareAnswer(trimmed)) continue
     if (!answersDecision(question)) continue
     return question === undefined ? { quote } : { quote, subject: question }

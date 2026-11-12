@@ -74,6 +74,25 @@ describe('authorizationQuote', () => {
     expect(grant('ship it')).toBeDefined()
   })
 
+  it('refuses a mention of assent as a grant', () => {
+    // The word is not the act. Each of these carries a grant form and describes
+    // the world instead of addressing the agent, so none of them authorizes.
+    expect(grant('the approved build is on main')).toBeUndefined()
+    expect(grant('pre-approved by legal')).toBeUndefined()
+    expect(grant('unapproved change')).toBeUndefined()
+    expect(grant('legal approved the change')).toBeUndefined()
+    expect(grant('the team approved it')).toBeUndefined()
+    expect(grant('I will do it tomorrow myself')).toBeUndefined()
+    expect(grant('the tests will proceed automatically')).toBeUndefined()
+    expect(grant('we ship it on fridays')).toBeUndefined()
+    expect(grant('they do it every night')).toBeUndefined()
+    // The same words, addressed to the agent, still grant.
+    expect(grant('approved')).toBeDefined()
+    expect(grant('ok approved')).toBeDefined()
+    expect(grant('please do it now')).toBeDefined()
+    expect(grant('go ahead and push the branch once the tests pass')).toBeDefined()
+  })
+
   it('reads an imperative that names what to act on', () => {
     expect(grant('push it')).toBeDefined()
     expect(grant('delete them')).toBeDefined()
