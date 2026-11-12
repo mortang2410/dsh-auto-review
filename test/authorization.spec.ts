@@ -125,6 +125,8 @@ describe('authorizationQuote', () => {
     expect(grant("Yes, I'm going to give it a go")).toBeUndefined()
     expect(grant("Yes, I’m going to give it a go")).toBeUndefined()
     expect(grant("Yes, I am going to give it a go")).toBeUndefined()
+    expect(grant("Yes, I'm gonna give it a go")).toBeUndefined()
+    expect(grant("Yes, I am ready to give it a go")).toBeUndefined()
     // The owner telling the agent to go is still a grant, and so is the incident.
     expect(grant('Yes, give it a go')).toBeDefined()
     expect(grant('YES I FUCKIGN GIVE IT / GO')).toBe('YES I FUCKIGN GIVE IT / GO')
