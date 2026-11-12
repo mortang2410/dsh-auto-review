@@ -505,6 +505,9 @@ describe('compact transcript context', () => {
     const section = buildContextSection(session.snapshotEvents(), { turns: 1, maxChars: 1000 })
     expect(section).toContain('not-the-owner source=schedule')
     expect(section).not.toContain('[user] The owner approved')
+    // The reserved owner section is built by its own filter; assert it refused
+    // this source too, so a future change to the label cannot leave it behind.
+    expect(section).not.toContain("The session owner's own words")
   })
 
   it('never presents a plugin followup that reuses the user kind as the owner', () => {
