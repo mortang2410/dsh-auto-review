@@ -57,7 +57,7 @@ import {
   type StateAppend,
   type VerdictAppend,
 } from './events.ts'
-import { findUserAuthorization, grantCoversRequest } from './authorization.ts'
+import { findReviewerOff } from './authorization.ts'
 import { isReviewFailure, newCircuitId, newRejectionId, newVerdictId, runReview, sanitizedArgumentsText, truncate } from './review.ts'
 import type { ReviewFailure, ReviewResolution } from './review.ts'
 
@@ -390,12 +390,11 @@ export class AutoReviewRuntime {
     // still needs the correlating `approval/asked`, so a grant on an
     // uncorrelatable request falls through to the reviewer path, which fails
     // closed like every other uncorrelatable request.
-    const grant = approvalId === undefined ? undefined : this.grantFor(session, memory, request.toolName)
-    // A bare answer's grant only covers the action it answered for; anything
-    // else goes to the reviewer, which sees the whole exchange.
-    if (grant !== undefined && approvalId !== undefined
-      && (grant.subject === undefined || grantCoversRequest(grant.subject, this.requestText(session, request)))) {
-      return this.settleGrant(request, approvalId, grant.quote)
+    const reviewerOff = approvalId === undefined ? undefined : this.reviewerOffFor(session, memory, request.toolName)
+    // The owner opened a message with YOLO: they asked for this work not to be
+    // reviewed, so it is settled without a reviewer.
+    if (reviewerOff !== undefined && approvalId !== undefined) {
+      return this.settleGrant(request, approvalId, reviewerOff.quote)
     }
     // Separate budgets: real AI verdicts vs reviewer failures. A broken
     // reviewer burns the failure budget (then delegates) without eating the
@@ -416,35 +415,26 @@ export class AutoReviewRuntime {
   }
 
   /**
-   * The human grant that authorizes this request, when one applies: the
-   * session owner's own words inside the authorization window, else a pending
-   * `/auto-review approve` override for the tool. Reading the override here
-   * consumes it — it is single-use by construction, and a second call on the
-   * same tool needs a second grant.
-   * @param session - the requesting session (its log holds both grants).
+   * The owner's own switch for this request, when they set one: a message in
+   * the window that opens with YOLO, else a pending `/auto-review approve`
+   * override for the tool. Reading the override here consumes it — it is
+   * single-use by construction, and a second call on the same tool needs a
+   * second one.
+   * @param session - the requesting session (its log holds both).
    * @param memory - the audit-disabled mirror holding in-memory overrides.
    * @param toolName - the tool the pending request is about.
-   * @returns the granting words, or undefined when the human has not granted.
+   * @returns the owner's words, or undefined when the reviewer is to run.
    */
-  private grantFor(session: Session, memory: SessionMemory, toolName: string): { quote: string; subject?: string } | undefined {
-    const authorization = findUserAuthorization(sessionEvents(session), session.header.delegationDepth ?? 0)
-    if (authorization !== undefined) return authorization
+  private reviewerOffFor(session: Session, memory: SessionMemory, toolName: string): { quote: string } | undefined {
+    const off = findReviewerOff(sessionEvents(session), session.header.delegationDepth ?? 0)
+    if (off !== undefined) return { quote: off.quote }
     const overrideId = this.activeOverrideFor(session, memory, toolName, Date.now())
     return overrideId === undefined ? undefined : { quote: `one-shot override ${String(overrideId)}` }
   }
 
   /**
-   * The text a scoped grant is matched against: the tool, the calling agent's
-   * stated reason, and the arguments the log recorded presenting.
-   */
-  private requestText(session: Session, request: ApprovalRequest): string {
-    const raw = request.callId === undefined ? undefined : findPresentedCall(sessionEvents(session), request.callId)
-    return `${request.toolName} ${request.reason ?? ''} ${raw ?? ''}`
-  }
-
-  /**
-   * Settle a granted request: record the log-only allow verdict that names the
-   * owner's words, and return the grant. No reviewer runs, no budget is spent,
+   * Settle a request the owner removed from review: record the log-only allow
+   * verdict that names their words, and return the grant. No reviewer runs, no budget is spent,
    * and the risk policy does not apply — a permission the owner stated is not
    * something a risk cap may downgrade. On an audit-disabled host the grant
    * reaches the in-memory mirror instead, marked as not reviewed so it cannot
@@ -466,7 +456,7 @@ export class AutoReviewRuntime {
         provider: 'human',
         durationMs: 0,
         decision: 'allow',
-        reason: `the user authorized this action: ${authorization}`,
+        reason: `the owner turned the auto reviewer off: ${authorization}`,
         humanAuthorized: authorization,
         outcome: 'allowed-once',
       }, { ignorable: true })

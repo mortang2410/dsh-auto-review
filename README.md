@@ -70,7 +70,7 @@ When an action crosses the sandbox boundary, a second model reads the evidence a
 6. **Full audit trail** — log-only `autoReview/verdict` + `autoReview/rejection` session events (envelope `ignorable: true`) plus an optional invariant companion enforcing marker ⟺ event.
 7. **Safety knobs** — a rejection circuit breaker (3 consecutive denials, or 6 of the last 10 verdicts, per turn), a risk-level policy, a one-shot `/auto-review approve` override, and a `never`-policy hard disable that explains itself to the model.
 8. **Optional reviewer context** — a bounded compact transcript (`contextBudget`) plus a Codex-style Markdown ruling policy (`reviewerPolicyText`).
-9. **Your own permission decides** — when you grant permission in your own message ("yes", "go ahead", "make the PR"), the pending call is granted without a reviewer, ahead of the AI budget and the risk clamp. `/auto-review approve` grants the same way.
+9. **YOLO turns the reviewer off** — a message that opens with `YOLO` (any case) settles the pending call without a reviewer, ahead of the AI budget and the risk clamp. Everything else goes to the reviewer, which reads your own words and is told to recognise personal approval however you phrase it, and never to refuse it. `/auto-review approve` settles one call the same way.
 
 Every decision reconstructs from the session log: `approval/asked` → `autoReview/verdict` (or `autoReview/rejection`) → `approval/decided`.
 
@@ -218,8 +218,8 @@ The panel reads only whole projection values — it never receives the raw sessi
                         │ yes
                         ▼
         ┌────────────────────────────────────────┐
-        │ the owner granted permission in this   │
-        │ window (their own words, or a pending  │ ── yes ──▶ allowed-once (no reviewer,
+        │ the owner opened a message with YOLO,  │
+        │ or holds a `/auto-review approve`?     │ ── yes ──▶ allowed-once (no reviewer,
         │ `/auto-review approve` override)?      │             no risk clamp, no AI budget)
         └───────────────┬────────────────────────┘
                         │ no
@@ -244,15 +244,14 @@ The panel reads only whole projection values — it never receives the raw sessi
 
 **Composition order.** The answerer runs at its registration position in the waterfall: if a human UI answerer is composed BEFORE the `auto-review` row, humans answer first and the reviewer only sees what is delegated downstream. Verify with `dsh --profile <name> --dump-config` and place the `auto-review` row before your human answerer rows when you want ai-policy tools routed to the reviewer first.
 
-### When the owner has already said yes
+### When the owner has already said what they want
 
 The reviewer exists for the moment no human is answering. It must never overrule a human who *is* answering, so the answerer reads the session log for your own grant before it starts a reviewer:
 
-- **What counts** — an explicit permission phrase ("you have my permission", "I approve"), a terse affirmative answer ("yes", "go ahead", "ship it"), or an imperative that names its object ("make the PR", "push it", "delete them"). A description ("the login page is broken") grants nothing, a negated permission ("you have no permission to push it") grants nothing, and a bare "yes" inside a statement of fact ("yes, the branch is main") answers a question rather than granting. A refusal ("not yet", "don't") grants nothing, a refusal in one clause does not cancel a grant in another clause, and a later message that only refuses revokes an earlier grant in the window.
-- **Where it counts** — the open turn plus the turn before it, which is where an authorization stated a moment earlier lives. A grant is turn-wide: once you have asked for something, the calls that carry it out are the calls you asked for, and singling one out for a second opinion is the bug this path removes.
-- **Who counts** — the owner's own typed messages only. Scheduled prompts declare their own source kind and are never read as your voice, and a delegated session grants nothing because its "user" message is the parent agent's prompt. One known limit: `dsh-client-auto-continue` delivers its continuation text under the `user` kind, so a host that configures a continuation template containing a grant phrase would grant for the rest of that window; its shipped defaults do not.
+- **YOLO takes the work out of review.** A message that opens with `YOLO`, in any case, settles the pending call as allowed: no reviewer starts, no AI budget is spent, and the risk policy has nothing to clamp. `/auto-review approve` does the same for a single call.
+- **Everything else is the reviewer's judgment.** There is no phrase list. The reviewer is given your `[user]` lines and told to work out whether you personally approved this work, in whatever words you chose, and never to refuse that approval because it was informal, rude, misspelt, or a phrasing the prompt never listed. A verdict resting on it is marked `ownerGrant`, and that marker carries the allow past the risk clamp.
+- **Where it applies** — the open turn plus the turn before it. Only your own typed messages count: scheduled prompts declare their own source kind and other plugins declare theirs, so neither is read as your voice, and a delegated session grants nothing because its "user" message is the parent agent's prompt.
 - **What it settles** — `allowed-once`, with no reviewer run, no AI-budget spend and no risk-policy clamp. The audit event records your words (`humanAuthorized`), so the decision reconstructs from the log like every other one. A `never` policy still wins: that is an administrator's hard disable, not a reviewer's opinion.
-- **The reviewer's own rule agrees** — the prompt tells it that an explicit grant in the transcript's `[user]` lines is the decision whatever the risk, and it marks that verdict (`ownerGrant`). The marker carries the allow past the risk clamp, so a phrasing the pattern list does not know (another language, an unusual wording) still cannot end in a denial.
 
 `/auto-review approve` takes the same path: it grants the next same-tool request without consulting a reviewer.
 
@@ -392,10 +391,10 @@ The server is read-only and deterministic: no network, no model, no writes.
 - `reviewerTools` names must exist as global tools in the profile; an unknown name fails the reviewer child loudly at the earliest point and falls back.
 - Risk rules match the request `reason`, the `toolName`, or the redacted call `arguments` per their `field`; other conditions belong in `toolsPolicy.overrides`.
 - The `/auto-review approve` override authorizes the next same-tool request, not the exact historical call; a different action on the same tool consumes it.
-- An authorization is read from the owner's own messages only (`user/message` events stamped with the `user` source kind) inside the open turn and the turn before it, and it is turn-wide: once you have said "make the PR", the calls that carry it out are all granted, not one of them. Scheduled prompts and every other plugin kind are never read as your voice, and a delegated session grants nothing — its "user" message is the parent agent's prompt.
-- The grant forms are English: an explicit permission phrase, a terse affirmative answer, or an imperative that names its object. A grant phrased some other way is left to the reviewer, which the prompt tells to allow what you authorized and to mark with `ownerGrant`, so that allow bypasses the risk clamp as well; a host that speaks another language should extend the pattern list in `src/authorization.ts`.
-- A later message that only refuses revokes an earlier grant in the window, a negated permission statement ("you have no permission") never grants, and a bare "yes" inside a statement of fact ("yes, the branch is main") is read as an answer to a question, not as a grant.
-- `dsh-client-auto-continue` delivers its continuation text under the `user` kind too. Its shipped defaults do not read as a grant; a host that configures a continuation template containing one ("go ahead") would grant for the rest of that window.
+- The reviewer-off switch is read from the owner's own messages only (`user/message` events stamped with the `user` source kind) inside the open turn and the turn before it, and it covers that whole window. Scheduled prompts and every other plugin kind are never read as your voice, and a delegated session takes nothing out of review — its "user" message is the parent agent's prompt.
+- Approval is the reviewer's reading, not a phrase list, so a host that speaks another language needs no code change: the prompt tells the reviewer to recognise personal approval in the owner's own words and to mark a verdict that rests on it with `ownerGrant`, which bypasses the risk clamp. What remains decided by code is the YOLO prefix alone.
+- `YOLO` is matched at the start of a message only: "ok YOLO" or "the yolo branch" leaves review on. A word that merely shares the first letters (`yolks`) does not match.
+- `dsh-client-auto-continue` delivers its continuation text under the `user` kind too. Its shipped defaults do not open with `YOLO`; a host that configures a continuation template starting with it would turn review off for the rest of that window.
 - The verdict events are log-only; the Web review panel reads the folded `autoReview` projection (the raw event stream never reaches browser plugins).
 - `autoReview/state` and `autoReview/verdict` are appended with the envelope's `ignorable: true` marker on hosts that honor it, so any harness build loads the log — readers that do not know the out-of-repo types simply skip those records. On released rc hosts (rc.1–rc.8) the runtime detects the dropped marker and never writes these events (the in-memory mirror keeps the command, budgets, breaker, and `approve` working for the session); sessions already polluted by pre-0.5.1 versions can be repaired with `scripts/repair-session-logs.mjs` from `dsh-permission-rules` (its default target set covers all five `autoReview/*` event types).
 - The git channel needs the single `allowBuilds` key the `dsh` CLI prints for `dsh-auto-review` itself. The repo ships its own `pnpm-workspace.yaml` with `allowBuilds: { esbuild: true }`; `typescript` + `tsdown` are regular `dependencies`.
