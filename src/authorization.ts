@@ -101,8 +101,12 @@ const AFFIRMATIVES: readonly RegExp[] = [
   /\bdefinitely\b/iu,
 ]
 
-/** A copula or auxiliary marks a statement of fact rather than an answer. */
-const DECLARATIVE = /\b(?:is|are|was|were|has|have|had|will|would|can|could|should|may|might|must)\b|['’](?:s|re|ll|ve|d)\b/iu
+/**
+ * A copula or auxiliary marks a statement of fact rather than an answer, and so
+ * does a first-person intention: "yes, I'm going to give it a go" describes what
+ * the owner will do, it does not hand the work to the agent.
+ */
+const DECLARATIVE = /\b(?:is|are|was|were|am|has|have|had|will|would|can|could|should|may|might|must)\b|['’](?:s|re|ll|ve|d)\b|['’]m\s+(?:going|gonna)\b/iu
 
 /** An affirmative answer is at most this many words; longer text carries content. */
 const AFFIRMATIVE_MAX_WORDS = 8
