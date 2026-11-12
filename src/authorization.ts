@@ -101,7 +101,7 @@ const AFFIRMATIVES: readonly RegExp[] = [
 ]
 
 /** A copula or auxiliary marks a statement of fact rather than an answer. */
-const DECLARATIVE = /\b(?:is|are|was|were|has|have|had|will|would|can|could|should|may|might|must)\b/iu
+const DECLARATIVE = /\b(?:is|are|was|were|has|have|had|will|would|can|could|should|may|might|must)\b|['’](?:s|re|ll|ve|d)\b/iu
 
 /** An affirmative answer is at most this many words; longer text carries content. */
 const AFFIRMATIVE_MAX_WORDS = 8
@@ -109,6 +109,25 @@ const AFFIRMATIVE_MAX_WORDS = 8
 /** Whether a clause reads as a bare answer rather than a statement of fact. */
 function isBareAnswer(clause: string): boolean {
   return clause.split(/\s+/u).length <= AFFIRMATIVE_MAX_WORDS && !DECLARATIVE.test(clause)
+}
+
+/**
+ * What the agent's question must mention for a bare "yes" to answer a decision
+ * rather than a question of fact. "Is the branch main?" makes "yes" a fact;
+ * "May I push it?" makes it an answer the owner meant as permission.
+ */
+const DECISION_QUESTION = /\b(?:may|can|could|should|shall|would|want|ready|ok|okay|approve|approval|permission|proceed|allow|go ahead)\b/iu
+
+/**
+ * Whether an affirmative answers a decision the agent put to the owner. With no
+ * question in the window there is nothing to answer, and the terse clause
+ * stands on its own.
+ * @param question - the nearest earlier agent message, when one exists.
+ * @returns true when a bare affirmative may count as a grant.
+ */
+function answersDecision(question: string | undefined): boolean {
+  if (question === undefined) return true
+  return question.includes('?') && DECISION_QUESTION.test(question)
 }
 
 /**
@@ -126,16 +145,22 @@ function textOf(content: readonly ContentBlock[]): string {
 /**
  * The owner's own words that grant permission, when the text carries one.
  * @param text - one human message.
+ * @param question - the agent's nearest earlier message, when the session has
+ *   one; a bare affirmative only answers it.
  * @returns the granting clause, trimmed and truncated, or undefined.
  */
-export function authorizationQuote(text: string): string | undefined {
+export function authorizationQuote(text: string, question?: string): string | undefined {
   if (LEADING_NO.test(text)) return undefined
   // Split on sentence and line ends, not commas: an imperative naming its
   // object ("make the PR") is often prefixed by an aside ("after lunch, ").
   for (const clause of text.split(/[.!?\n]+/u)) {
     const trimmed = clause.trim()
     if (trimmed === '' || REFUSAL.test(trimmed) || NEGATED.test(trimmed)) continue
-    if (!EXPLICIT.some(pattern => pattern.test(trimmed)) && !(AFFIRMATIVES.some(pattern => pattern.test(trimmed)) && isBareAnswer(trimmed))) continue
+    const explicit = EXPLICIT.some(pattern => pattern.test(trimmed))
+    const affirmative = AFFIRMATIVES.some(pattern => pattern.test(trimmed))
+      && isBareAnswer(trimmed)
+      && answersDecision(question)
+    if (!explicit && !affirmative) continue
     return trimmed.length <= QUOTE_MAX_CHARS ? trimmed : `${trimmed.slice(0, QUOTE_MAX_CHARS)}…`
   }
   return undefined
@@ -177,26 +202,27 @@ function contentWords(text: string): readonly string[] {
 /**
  * Whether the owner's message withdraws the action an earlier grant authorized.
  *
- * A refusal only revokes when it is about that action. A message that refuses
- * something else — "don't worry about the tests", after "make the PR" — is an
- * aside, and the grant still stands. A refusal revokes when it points back at
- * the action ("don't push it"), names the action's own object ("don't create
- * the PR"), names work of the same kind ("don't merge the PR"), or stands alone
- * as a bare refusal ("no", "not yet", "wait").
+ * A refusal only revokes when it names work that is the granted action: the
+ * same object ("don't create the PR"), or a pronoun pointing at it ("don't push
+ * it"). A refusal of other work ("don't delete the logs", "don't run the
+ * tests"), a worried aside ("don't worry about it"), and a leading "No" about
+ * something else ("No, the tests are flaky") all leave the grant standing. A
+ * message that carries nothing but a refusal ("no", "not yet", "wait") is the
+ * owner stopping the work in flight, so it does revoke.
  * @param text - one later human message.
  * @param grant - the granting clause it might withdraw.
  * @returns true when the message withdraws that grant.
  */
 export function revokesGrant(text: string, grant: string): boolean {
-  if (LEADING_NO.test(text)) return true
   const granted = new Set(contentWords(grant))
+  if (contentWords(text).length === 0 && (LEADING_NO.test(text) || REFUSAL.test(text))) return true
   return text.split(/[.!?\n]+/u).some(clause => {
-    if (!REFUSAL.test(clause)) return false
+    if (!REFUSAL.test(clause) && !LEADING_NO.test(clause)) return false
+    // The withdrawal has to name work — a worried aside does not — and that
+    // work has to be the granted action, not some other task in the session.
+    if (!WORK.test(clause)) return false
     if (ANAPHORA.test(clause)) return true
-    if (WORK.test(clause)) return true
-    const words = contentWords(clause)
-    if (words.length <= 1) return true
-    return words.some(word => granted.has(word))
+    return contentWords(clause).some(word => granted.has(word))
   })
 }
 
@@ -222,27 +248,42 @@ export interface UserAuthorization {
  */
 export function findUserAuthorization(events: readonly SessionEvent[], delegationDepth = 0): UserAuthorization | undefined {
   if (delegationDepth > 0) return undefined
+  // Collect the window first: a bare affirmative needs the agent's question,
+  // which sits before it, so the scan runs forward.
+  const window: SessionEvent[] = []
   let closed = 0
-  const later: string[] = []
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index] as SessionEvent
     if (event.type === 'turn/end') {
       closed += 1
-      if (closed >= AUTHORIZATION_TURNS) return undefined
+      if (closed >= AUTHORIZATION_TURNS) break
+    }
+    window.push(event)
+  }
+  window.reverse()
+  let question: string | undefined
+  let granted: UserAuthorization | undefined
+  let later: string[] = []
+  for (const event of window) {
+    if (event.type === 'assistant/message') {
+      question = textOf((event.data as { message: { content: readonly ContentBlock[] } }).message.content)
       continue
     }
     if (event.type !== 'user/message') continue
     if (event.data.source?.kind !== 'user') continue
     const text = textOf(event.data.content)
-    const quote = authorizationQuote(text)
+    const quote = authorizationQuote(text, question)
     if (quote !== undefined) {
-      // A later message that withdraws this action revokes it: the owner
-      // changed their mind, and continuing past it would settle on words they
-      // took back. A later message that refuses something else leaves it.
-      const withdrawn = later.some(message => revokesGrant(message, quote))
-      return withdrawn ? undefined : { quote, seq: event.seq }
+      granted = { quote, seq: event.seq }
+      later = []
+      continue
     }
-    later.push(text)
+    if (granted !== undefined) later.push(text)
   }
-  return undefined
+  if (granted === undefined) return undefined
+  // A later message that withdraws this action revokes it: the owner changed
+  // their mind, and continuing past it would settle on words they took back. A
+  // later message that refuses something else leaves the grant standing.
+  const withdrawn = later.some(message => revokesGrant(message, granted.quote))
+  return withdrawn ? undefined : granted
 }

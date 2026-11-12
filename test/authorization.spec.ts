@@ -32,7 +32,7 @@ function auditHarness(
 
 /** Append an event to the harness session with raw-typed data. */
 function append(session: Session, type: string, data: unknown): void {
-  const surface = type === 'user/message'
+  const surface = type === 'user/message' || type === 'assistant/message'
   ;(session.append as unknown as (type: string, data: unknown, options?: { surfaceOp: 'append' }) => unknown)
     .call(session, type, data, surface ? { surfaceOp: 'append' } : undefined)
 }
@@ -113,6 +113,7 @@ describe('authorizationQuote', () => {
     expect(grant('yes please')).toBeDefined()
     // The owner answered a factual question; that is not a grant.
     expect(grant('Yes, the branch is main')).toBeUndefined()
+    expect(grant("Yes, that's the branch")).toBeUndefined()
     expect(grant('sure, the build was green yesterday')).toBeUndefined()
   })
 
@@ -131,9 +132,18 @@ describe('revokesGrant', () => {
     expect(revokesGrant("don't push it", 'make the PR')).toBe(true)
     expect(revokesGrant('no', 'make the PR')).toBe(true)
     expect(revokesGrant('not yet', 'make the PR')).toBe(true)
-    // A refusal of something else is an aside: the grant still stands.
+  })
+
+  it('leaves the grant standing when the refusal is about something else', () => {
+    // Other work, other objects, worried asides, and an unrelated leading "No"
+    // are not withdrawals of what the owner authorized.
     expect(revokesGrant("don't worry about the tests", 'make the PR')).toBe(false)
     expect(revokesGrant('never mind the flaky tests', 'make the PR')).toBe(false)
+    expect(revokesGrant("don't delete the logs", 'make the PR')).toBe(false)
+    expect(revokesGrant("don't forget to run the tests", 'make the PR')).toBe(false)
+    expect(revokesGrant("don't worry about it", 'make the PR')).toBe(false)
+    expect(revokesGrant("don't worry about the PR number", 'make the PR')).toBe(false)
+    expect(revokesGrant('No, the tests are flaky', 'make the PR')).toBe(false)
   })
 })
 
@@ -194,6 +204,28 @@ describe('findUserAuthorization', () => {
     append(harness.session, 'turn/start', { turn: 2 })
     say(harness.session, "don't push it")
     expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
+  })
+
+  it('does not read a bare yes that answers a question of fact', async () => {
+    const harness = await mountHarness()
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Is the branch main?' }] },
+    })
+    say(harness.session, 'yes')
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toBeUndefined()
+  })
+
+  it('reads a bare yes that answers a decision the agent put to the owner', async () => {
+    const harness = await mountHarness()
+    append(harness.session, 'assistant/message', {
+      turn: 1,
+      step: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'May I push the branch now?' }] },
+    })
+    say(harness.session, 'yes')
+    expect(findUserAuthorization(harness.session.snapshotEvents())).toMatchObject({ quote: 'yes' })
   })
 })
 
